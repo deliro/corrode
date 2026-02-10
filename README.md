@@ -1,483 +1,535 @@
-# Result
+# corrode
 
-[![GitHub Workflow Status (branch)](https://img.shields.io/github/actions/workflow/status/rustedpy/result/ci.yml?branch=main)](https://github.com/rustedpy/result/actions/workflows/ci.yml?query=branch%3Amain)
-[![Coverage](https://codecov.io/gh/rustedpy/result/branch/main/graph/badge.svg)](https://codecov.io/gh/rustedpy/result)
+[![CI](https://github.com/deliro/corrode/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/deliro/corrode/actions/workflows/ci.yml?query=branch%3Amain)
+[![codecov](https://codecov.io/gh/deliro/corrode/branch/main/graph/badge.svg)](https://codecov.io/gh/deliro/corrode)
 
-A simple Result type for Python 3 [inspired by
-Rust](https://doc.rust-lang.org/std/result/), fully type annotated.
+A Rust-like `Result` type for Python 3.11+, fully type annotated.
 
 ## Installation
 
-Latest release:
-
-``` sh
-$ pip install result
+```sh
+uv add corrode
 ```
 
-Latest GitHub `main` branch version:
+or with pip / poetry:
 
-``` sh
-$ pip install git+https://github.com/rustedpy/result
+```sh
+pip install corrode
+poetry add corrode
 ```
 
-## Summary
+## Why
 
-The idea is that a result value can be either `Ok(value)` or
-`Err(error)`, with a way to differentiate between the two. `Ok` and
-`Err` are both classes encapsulating an arbitrary value. `Result[T, E]`
-is a generic type alias for `typing.Union[Ok[T], Err[E]]`. It will
-change code like this:
+Exceptions are implicit. Nothing in a function signature tells you it can
+raise, what it raises, or whether the caller remembered to handle it.
+Bugs hide until production, and `except Exception` becomes the norm:
 
-``` python
-def get_user_by_email(email: str) -> Tuple[Optional[User], Optional[str]]:
-    """
-    Return the user instance or an error message.
-    """
-    if not user_exists(email):
-        return None, 'User does not exist'
-    if not user_active(email):
-        return None, 'User is inactive'
-    user = get_user(email)
-    return user, None
-
-user, reason = get_user_by_email('ueli@example.com')
-if user is None:
-    raise RuntimeError('Could not fetch user: %s' % reason)
-else:
-    do_something(user)
-```
-
-To something like this:
-
-``` python
-from result import Ok, Err, Result, is_ok, is_err
-
-def get_user_by_email(email: str) -> Result[User, str]:
-    """
-    Return the user instance or an error message.
-    """
-    if not user_exists(email):
-        return Err('User does not exist')
-    if not user_active(email):
-        return Err('User is inactive')
-    user = get_user(email)
-    return Ok(user)
-
-user_result = get_user_by_email(email)
-if is_ok(user_result):
-    # type(user_result.ok_value) == User
-    do_something(user_result.ok_value)
-else:
-    # type(user_result.err_value) == str
-    raise RuntimeError('Could not fetch user: %s' % user_result.err_value)
-```
-
-Note that `.ok_value` exists only on an instance of `Ok` and
-`.err_value` exists only on an instance of `Err`.
-
-And if you're using python version `3.10` or later, you can use the
-elegant `match` statement as well:
-
-``` python
-from result import Result, Ok, Err
-
-def divide(a: int, b: int) -> Result[int, str]:
-    if b == 0:
-        return Err("Cannot divide by zero")
-    return Ok(a // b)
-
-values = [(10, 0), (10, 5)]
-for a, b in values:
-    match divide(a, b):
-        case Ok(value):
-            print(f"{a} // {b} == {value}")
-        case Err(e):
-            print(e)
-```
-
-Not all methods
-(<https://doc.rust-lang.org/std/result/enum.Result.html>) have been
-implemented, only the ones that make sense in the Python context.
-All of this in a package allowing easier handling of values that can
-be OK or not, without resorting to custom exceptions.
-
-## API
-
-Auto generated API docs are also available at
-[./docs/README.md](./docs/README.md).
-
-Creating an instance:
-
-``` python
->>> from result import Ok, Err
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
-```
-
-Checking whether a result is `Ok` or `Err`:
-
-``` python
-if is_err(result):
-    raise RuntimeError(result.err_value)
-do_something(result.ok_value)
-```
-or
-``` python
-if is_ok(result):
-    do_something(result.ok_value)
-else:
-    raise RuntimeError(result.err_value)
-```
-
-Alternatively, `isinstance` can be used (interchangeably to type guard functions
-`is_ok` and `is_err`). However, relying on `isinstance` may result in code that
-is slightly less readable and less concise:
-
-``` python
-if isinstance(result, Err):
-    raise RuntimeError(result.err_value)
-do_something(result.ok_value)
-```
-
-You can also check if an object is `Ok` or `Err` by using the `OkErr`
-type. Please note that this type is designed purely for convenience, and
-should not be used for anything else. Using `(Ok, Err)` also works fine:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> isinstance(res1, OkErr)
-True
->>> isinstance(res2, OkErr)
-True
->>> isinstance(1, OkErr)
-False
->>> isinstance(res1, (Ok, Err))
-True
-```
-
-Convert a `Result` to the value or `None`:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.ok()
-'yay'
->>> res2.ok()
-None
-```
-
-Convert a `Result` to the error or `None`:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.err()
-None
->>> res2.err()
-'nay'
-```
-
-Access the value directly, without any other checks:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.ok_value
-'yay'
->>> res2.err_value
-'nay'
-```
-
-Note that this is a property, you cannot assign to it. Results are
-immutable.
-
-When the value inside is irrelevant, we suggest using `None` or a
-`bool`, but you're free to use any value you think works best. An
-instance of a `Result` (`Ok` or `Err`) must always contain something. If
-you're looking for a type that might contain a value you may be
-interested in a [maybe](https://github.com/rustedpy/maybe).
-
-The `unwrap` method returns the value if `Ok` and `unwrap_err` method
-returns the error value if `Err`, otherwise it raises an `UnwrapError`:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.unwrap()
-'yay'
->>> res2.unwrap()
-Traceback (most recent call last):
-File "<stdin>", line 1, in <module>
-File "C:\project\result\result.py", line 107, in unwrap
-    return self.expect("Called `Result.unwrap()` on an `Err` value")
-File "C:\project\result\result.py", line 101, in expect
-    raise UnwrapError(message)
-result.result.UnwrapError: Called `Result.unwrap()` on an `Err` value
->>> res1.unwrap_err()
-Traceback (most recent call last):
-...
->>>res2.unwrap_err()
-'nay'
-```
-
-A custom error message can be displayed instead by using `expect` and
-`expect_err`:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.expect('not ok')
-'yay'
->>> res2.expect('not ok')
-Traceback (most recent call last):
-File "<stdin>", line 1, in <module>
-File "C:\project\result\result.py", line 101, in expect
-    raise UnwrapError(message)
-result.result.UnwrapError: not ok
->>> res1.expect_err('not err')
-Traceback (most recent call last):
-...
->>> res2.expect_err('not err')
-'nay'
-```
-
-A default value can be returned instead by using `unwrap_or` or
-`unwrap_or_else`:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.unwrap_or('default')
-'yay'
->>> res2.unwrap_or('default')
-'default'
->>> res1.unwrap_or_else(str.upper)
-'yay'
->>> res2.unwrap_or_else(str.upper)
-'NAY'
-```
-
-The `unwrap` method will raised an `UnwrapError`. A custom exception can
-be raised by using the `unwrap_or_raise` method instead:
-
-``` python
->>> res1 = Ok('yay')
->>> res2 = Err('nay')
->>> res1.unwrap_or_raise(ValueError)
-'yay'
->>> res2.unwrap_or_raise(ValueError)
-ValueError: nay
-```
-
-Values and errors can be mapped using `map`, `map_or`, `map_or_else` and
-`map_err`:
-
-``` python
->>> Ok(1).map(lambda x: x + 1)
-Ok(2)
->>> Err('nay').map(lambda x: x + 1)
-Err('nay')
->>> Ok(1).map_or(-1, lambda x: x + 1)
-2
->>> Err(1).map_or(-1, lambda x: x + 1)
--1
->>> Ok(1).map_or_else(lambda: 3, lambda x: x + 1)
-2
->>> Err('nay').map_or_else(lambda: 3, lambda x: x + 1)
-3
->>> Ok(1).map_err(lambda x: x + 1)
-Ok(1)
->>> Err(1).map_err(lambda x: x + 1)
-Err(2)
-```
-
-To save memory, both the `Ok` and `Err` classes are ‘slotted’, i.e. they
-define `__slots__`. This means assigning arbitrary attributes to
-instances will raise `AttributeError`.
-
-### `as_result` Decorator
-
-The `as_result()` decorator can be used to quickly turn ‘normal’
-functions into `Result` returning ones by specifying one or more
-exception types:
-
-``` python
-@as_result(ValueError, IndexError)
-def f(value: int) -> int:
-    if value == 0:
-        raise ValueError  # becomes Err
-    elif value == 1:
-        raise IndexError  # becomes Err
-    elif value == 2:
-        raise KeyError  # raises Exception
-    else:
-        return value  # becomes Ok
-
-res = f(0)  # Err[ValueError()]
-res = f(1)  # Err[IndexError()]
-res = f(2)  # raises KeyError
-res = f(3)  # Ok[3]
-```
-
-`Exception` (or even `BaseException`) can be specified to create a
-‘catch all’ `Result` return type. This is effectively the same as `try`
-followed by `except Exception`, which is not considered good practice in
-most scenarios, and hence this requires explicit opt-in.
-
-Since `as_result` is a regular decorator, it can be used to wrap
-existing functions (also from other libraries), albeit with a slightly
-unconventional syntax (without the usual `@`):
-
-``` python
-import third_party
-
-x = third_party.do_something(...)  # could raise; who knows?
-
-safe_do_something = as_result(Exception)(third_party.do_something)
-
-res = safe_do_something(...)  # Ok(...) or Err(...)
-if is_ok(res):
-    print(res.ok_value)
-```
-
-### Do notation
-
-Do notation is syntactic sugar for a sequence of `and_then()` calls.
-Much like the equivalent in Rust or Haskell, but with different syntax.
-Instead of `x <- Ok(1)` we write `for x in Ok(1)`. Since the syntax is
-generator-based, the final result must be the first line, not the last.
-
-``` python
-final_result: Result[int, str] = do(
-    Ok(x + y)
-    for x in Ok(1)
-    for y in Ok(2)
-)
-```
-
-Note that if you exclude the type annotation,
-`final_result: Result[float, int] = ...`, your type checker may be
-unable to infer the return type. To avoid an errors or warnings from
-your type checker, you should add a type hint when using the `do`
-function.
-
-This is similar to Rust's [m!
-macro](https://docs.rs/do-notation/latest/do_notation/):
-
-``` rust
-use do_notation::m;
-let r = m! {
-    x <- Some(1);
-    y <- Some(2);
-    Some(x + y)
-};
-```
-
-Note that if your do statement has multiple <span
-class="title-ref">for\`s, you can access an identifier bound in a
-previous \`for</span>. Example:
-
-``` python
-my_result: Result[int, str] = do(
-    f(x, y, z)
-    for x in get_x()
-    for y in calculate_y_from_x(x)
-    for z in calculate_z_from_x_y(x, y)
-)
-```
-
-You can use `do()` with awaited values as follows:
-
-``` python
-async def process_data(data) -> Result[int, str]:
-    res1 = await get_result_1(data)
-    res2 = await get_result_2(data)
-    return do(
-        Ok(x + y)
-        for x in res1
-        for y in res2
-    )
-```
-
-However, if you want to await something inside the expression, use
-`do_async()`:
-
-``` python
-async def process_data(data) -> Result[int, str]:
-    return do_async(
-        Ok(x + y)
-        for x in await get_result_1(data)
-        for y in await get_result_2(data)
-    )
-```
-
-Troubleshooting `do()` calls:
-
-``` python
-TypeError("Got async_generator but expected generator")
-```
-
-Sometimes regular `do()` can handle async values, but this error means
-you have hit a case where it does not. You should use `do_async()` here
-instead.
-
-## Contributing
-
-These steps should work on any Unix-based system (Linux, macOS, etc) with Python
-and `make` installed. On Windows, you will need to refer to the Python
-documentation (linked below) and reference the `Makefile` for commands to run
-from the non-unix shell you're using on Windows.
-
-1. Setup and activate a virtual environment. See [Python docs][pydocs-venv] for more
-   information about virtual environments and setup.
-2. Run `make install` to install dependencies
-3. Switch to a new git branch and make your changes
-4. Test your changes:
-  - `make test`
-  - `make lint`
-  - You can also start a Python REPL and import `result`
-5. Update documentation
-  - Edit any relevant docstrings, markdown files
-  - Run `make docs`
-6. Add an entry to the [changelog](./CHANGELOG.md)
-5. Git commit all your changes and create a new PR.
-
-[pydocs-venv]: https://docs.python.org/3/library/venv.html
-
-## FAQ
-
--   **Why should I use the `is_ok` (`is_err`) type guard function over the `is_ok` (`is_err`) method?**
-
-As you can see in the following example, MyPy can only narrow the type correctly
-while using the type guard **functions**:
 ```python
-result: Result[int, str]
-
-if is_ok(result):
-    reveal_type(result)  # "result.result.Ok[builtins.int]"
-else:
-    reveal_type(result)  # "result.result.Err[builtins.str]"
-
-if result.is_ok():
-    reveal_type(result)  # "Union[result.result.Ok[builtins.int], result.result.Err[builtins.str]]"
-else:
-    reveal_type(result)  # "Union[result.result.Ok[builtins.int], result.result.Err[builtins.str]]"
+def get_user(user_id: int) -> User:
+    # Can this raise? What exceptions? The caller has no idea.
+    ...
 ```
 
--   **Why do I get the "Cannot infer type argument" error with MyPy?**
+`Result` makes errors explicit, typed, and impossible to ignore:
 
-There is [a bug in MyPy](https://github.com/python/mypy/issues/230)
-which can be triggered in some scenarios. Using `if isinstance(res, Ok)`
-instead of `if res.is_ok()` will help in some cases. Otherwise using
-[one of these
-workarounds](https://github.com/python/mypy/issues/3889#issuecomment-325997911)
-can help.
+```python
+def get_user(user_id: int) -> Result[User, NotFound | Forbidden]:
+    ...
+```
 
-## Related Projects
+Now every caller sees the possible errors in the signature, the type checker
+verifies every branch is handled, and adding a new error variant is
+a compile-time breaking change — not a runtime surprise.
 
-- [dry-python/returns: Make your functions return something meaningful, typed, and safe!](https://github.com/dry-python/returns)
-- [alexandermalyga/poltergeist: Rust-like error handling in Python, with type-safety in mind.](https://github.com/alexandermalyga/poltergeist)
+## Quick start
+
+`Result[T, E]` is a union of `Ok[T] | Err[E]`. Every `Result` must be explicitly
+handled — no silent `None`s, no uncaught exceptions.
+
+```python
+from dataclasses import dataclass
+from corrode import Ok, Err, Result
+
+
+@dataclass
+class User:
+    id: int
+    name: str
+    email: str
+
+
+@dataclass
+class NotFound:
+    user_id: int
+
+@dataclass
+class Forbidden:
+    reason: str
+
+type GetUserError = NotFound | Forbidden
+
+
+def get_user(user_id: int) -> Result[User, GetUserError]:
+    if user_id <= 0:
+        return Err(NotFound(user_id=user_id))
+    if user_id == 13:
+        return Err(Forbidden(reason="banned"))
+    return Ok(User(id=user_id, name="Alice", email="alice@example.com"))
+```
+
+## Exhaustive error handling
+
+Use a nested `match` on the error value together with `assert_never` to get
+a compile-time guarantee that every error variant is handled:
+
+```python
+from typing import assert_never
+
+match get_user(42):
+    case Ok(user):
+        print(f"Welcome, {user.name}")
+    case Err(e):
+        match e:
+            case NotFound(user_id=uid):
+                print(f"User {uid} does not exist")
+            case Forbidden(reason=reason):
+                print(f"Access denied: {reason}")
+            case _:
+                assert_never(e)
+```
+
+Now add a new error variant:
+
+```python
+@dataclass
+class RateLimited:
+    retry_after: float
+
+type GetUserError = NotFound | Forbidden | RateLimited
+```
+
+Without changing anything else, `mypy` immediately reports:
+
+```
+error: Argument 1 to "assert_never" has incompatible type "RateLimited"; expected "Never"
+```
+
+You are forced to handle the new case before the code passes type checking.
+No error silently slips through.
+
+## Adopting corrode in an existing codebase
+
+You don't have to rewrite everything at once. Exceptions don't disappear
+overnight, and third-party libraries will always raise them. That's fine —
+`corrode` is designed for gradual adoption.
+
+### Step 1: wrap existing functions with `@as_result`
+
+You have code that raises. Don't rewrite it yet — just wrap it:
+
+```python
+from corrode import as_result
+
+# Before: raises KeyError, ValueError, nobody knows about it
+def parse_port(key: str) -> int:
+    return int(os.environ[key])
+
+# After: signature tells you exactly what can go wrong
+@as_result(KeyError, ValueError)
+def parse_port(key: str) -> int:
+    return int(os.environ[key])
+```
+
+The function body stays the same. The only change is the decorator, and
+the callers now get a `Result` instead of praying nothing blows up:
+
+```python
+from typing import assert_never
+
+match parse_port("PORT"):
+    case Ok(port):
+        start_server(port)
+    case Err(e):
+        match e:
+            case KeyError():
+                start_server(8080)
+            case ValueError():
+                sys.exit(f"Invalid PORT: {e}")
+            case _:
+                assert_never(e)
+```
+
+### Step 2: return `Err(exception)` explicitly
+
+Once callers are adapted, you can drop the decorator and return errors
+explicitly. The function still uses exception classes, so the callers
+don't change:
+
+```python
+def parse_port(key: str) -> Result[int, KeyError | ValueError]:
+    raw = os.environ.get(key)
+    if raw is None:
+        return Err(KeyError(key))
+    try:
+        return Ok(int(raw))
+    except ValueError as exc:
+        return Err(exc)
+```
+
+### Step 3: replace exceptions with domain types
+
+When you're ready, replace exception classes with dataclasses that carry
+exactly the data the caller needs:
+
+```python
+@dataclass
+class MissingKey:
+    key: str
+
+@dataclass
+class InvalidValue:
+    key: str
+    raw: str
+
+type ConfigError = MissingKey | InvalidValue
+
+
+def parse_port(key: str) -> Result[int, ConfigError]:
+    raw = os.environ.get(key)
+    if raw is None:
+        return Err(MissingKey(key=key))
+    try:
+        return Ok(int(raw))
+    except ValueError:
+        return Err(InvalidValue(key=key, raw=raw))
+```
+
+Each step is a small, safe refactoring. Your callers get progressively
+better types, and `mypy` catches every unhandled case.
+
+### Exceptions inside Result-returning code
+
+Third-party libraries raise exceptions — that's fine. A `try/except`
+inside a function that returns `Result` is completely normal:
+
+```python
+import httpx
+
+
+def fetch_data(url: str) -> Result[bytes, NotFound | Unavailable]:
+    try:
+        response = httpx.get(url)
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        if exc.response.status_code == 404:
+            return Err(NotFound(url=url))
+        return Err(Unavailable(url=url, status=exc.response.status_code))
+    except httpx.ConnectError:
+        return Err(Unavailable(url=url, status=0))
+    return Ok(response.content)
+```
+
+You catch the exception, convert it to a typed `Err` with exactly the
+data the caller needs, and the rest of your code stays in `Result`-land.
+No need to wrap every library call — just handle exceptions where they
+happen and return a meaningful error.
+
+If a function simply re-raises a third-party exception without
+transformation, `@as_result` can save some boilerplate:
+
+```python
+from corrode import as_result
+
+@as_result(httpx.ConnectError)
+def fetch_bytes(url: str) -> bytes:
+    return httpx.get(url).content
+```
+
+## API reference
+
+### Pattern matching
+
+The preferred way to handle results — see
+[Exhaustive error handling](#exhaustive-error-handling) above for the full
+pattern with `assert_never`.
+
+`Ok` and `Err` support structural pattern matching via `__match_args__`:
+
+```python
+match get_user(42):
+    case Ok(user):
+        print(user.name)
+    case Err(error):
+        print(error)
+```
+
+### Checking and narrowing
+
+Type guard functions narrow the type so the type checker knows exactly
+which variant you have:
+
+```python
+from corrode import is_ok, is_err
+
+result = get_user(42)
+
+if is_ok(result):
+    # type checker sees Ok[User] here
+    send_email(result.ok_value)
+elif is_err(result):
+    # type checker sees Err[GetUserError] here
+    log(result.err_value)
+```
+
+Methods on the result itself:
+
+```python
+Ok(1).is_ok()    # True
+Ok(1).is_err()   # False
+Err(1).is_ok()   # False
+Err(1).is_err()  # True
+```
+
+### Accessors
+
+Extract the inner value as an `Optional`:
+
+```python
+Ok(1).ok()       # 1
+Ok(1).err()      # None
+
+Err("e").ok()    # None
+Err("e").err()   # "e"
+```
+
+Direct access via properties:
+
+```python
+Ok(1).ok_value       # 1
+Err("e").err_value   # "e"
+```
+
+### Unwrapping
+
+Extract the value when you're certain it's `Ok`, or provide a fallback:
+
+```python
+Ok(1).unwrap()                           # 1
+Ok(1).expect("must be present")          # 1
+
+Err("e").unwrap()                        # raises UnwrapError
+Err("e").expect("must be present")       # raises UnwrapError
+
+Ok(1).unwrap_or(0)                       # 1
+Err("e").unwrap_or(0)                    # 0
+
+Ok(1).unwrap_or_else(lambda e: 0)        # 1
+Err("e").unwrap_or_else(str.upper)       # "E"
+
+Ok(1).unwrap_or_raise(ValueError)        # 1
+Err("e").unwrap_or_raise(ValueError)     # raises ValueError("e")
+```
+
+The reverse — extract the error:
+
+```python
+Err("e").unwrap_err()                    # "e"
+Err("e").expect_err("must be err")       # "e"
+
+Ok(1).unwrap_err()                       # raises UnwrapError
+Ok(1).expect_err("must be err")          # raises UnwrapError
+```
+
+`UnwrapError` carries the original result:
+
+```python
+try:
+    Err("e").unwrap()
+except UnwrapError as exc:
+    exc.result  # Err("e")
+```
+
+If the contained error is a `BaseException`, it is chained as `__cause__`:
+
+```python
+try:
+    Err(ValueError("bad")).unwrap()
+except UnwrapError as exc:
+    exc.__cause__  # ValueError("bad")
+```
+
+Async variant: `unwrap_or_else_async`.
+
+### Transforming values
+
+```python
+Ok(2).map(lambda x: x * 3)              # Ok(6)
+Err("e").map(lambda x: x * 3)           # Err("e") — untouched
+
+Err(404).map_err(lambda c: f"HTTP {c}")  # Err("HTTP 404")
+Ok(1).map_err(lambda c: f"HTTP {c}")     # Ok(1) — untouched
+
+Ok(1).map_or(-1, lambda x: x + 1)       # 2
+Err(1).map_or(-1, lambda x: x + 1)      # -1
+
+Ok(1).map_or_else(lambda e: -1, lambda x: x + 1)       # 2
+Err("e").map_or_else(lambda e: e.upper(), lambda x: x)  # "E"
+```
+
+Async variants: `map_async`, `map_err_async`, `map_or_async`,
+`map_or_else_async`.
+
+### Chaining with `and_then` / `or_else`
+
+`and_then` calls the function only if `Ok`, otherwise forwards the `Err`:
+
+```python
+def parse_int(s: str) -> Result[int, str]:
+    if s.isdigit():
+        return Ok(int(s))
+    return Err(f"not a number: {s!r}")
+
+def check_positive(n: int) -> Result[int, str]:
+    if n > 0:
+        return Ok(n)
+    return Err(f"{n} is not positive")
+
+parse_int("42").and_then(check_positive)   # Ok(42)
+parse_int("-1").and_then(check_positive)   # Err("-1 is not positive")
+parse_int("abc").and_then(check_positive)  # Err("not a number: 'abc'")
+```
+
+`or_else` calls the function only if `Err`, otherwise forwards the `Ok`:
+
+```python
+Ok(2).or_else(lambda e: Ok(0))           # Ok(2) — untouched
+Err(3).or_else(lambda e: Ok(e * e))      # Ok(9)
+Err(3).or_else(lambda e: Err(e))         # Err(3)
+```
+
+Async variants: `and_then_async`, `or_else_async`.
+
+### Predicates
+
+```python
+Ok(4).is_ok_and(lambda x: x > 2)         # True
+Ok(0).is_ok_and(lambda x: x > 2)         # False
+Err("e").is_ok_and(lambda x: x > 2)      # False
+
+Err(404).is_err_and(lambda e: e >= 400)   # True
+Err(200).is_err_and(lambda e: e >= 400)   # False
+Ok(1).is_err_and(lambda e: e >= 400)      # False
+```
+
+Async variants: `is_ok_and_async`, `is_err_and_async`.
+
+### Inspecting
+
+Call a function on the contained value for side effects without consuming
+the result:
+
+```python
+Ok(42).inspect(print)           # prints 42, returns Ok(42)
+Err("e").inspect(print)         # does nothing, returns Err("e")
+
+Err("e").inspect_err(print)     # prints "e", returns Err("e")
+Ok(42).inspect_err(print)       # does nothing, returns Ok(42)
+```
+
+Async variants: `inspect_async`, `inspect_err_async`.
+
+### Async methods
+
+Every transformation and predicate method has an `_async` variant that
+accepts an async callable and returns an awaitable:
+
+```python
+async def fetch_name(user_id: int) -> str:
+    ...
+
+result: Result[int, str] = Ok(42)
+
+# map_async
+ok = await result.map_async(fetch_name)
+
+# and_then_async
+async def validate(x: int) -> Result[int, str]:
+    ...
+
+ok = await result.and_then_async(validate)
+
+# unwrap_or_else_async
+async def fallback(e: str) -> int:
+    return 0
+
+value = await result.unwrap_or_else_async(fallback)
+```
+
+Full list: `map_async`, `map_err_async`, `map_or_async`,
+`map_or_else_async`, `and_then_async`, `or_else_async`,
+`unwrap_or_else_async`, `is_ok_and_async`, `is_err_and_async`,
+`inspect_async`, `inspect_err_async`.
+
+### `do` notation
+
+Syntactic sugar for a sequence of `and_then()` calls. If any step is `Err`,
+the whole expression short-circuits:
+
+```python
+from corrode import do, Ok, Result
+
+
+def get_subscription(user: User) -> Result[Subscription, GetUserError]: ...
+
+result: Result[str, GetUserError] = do(
+    Ok(f"{user.name} has {sub.plan}")
+    for user in get_user(42)
+    for sub in get_subscription(user)
+)
+```
+
+For async code, use `do_async`:
+
+```python
+from corrode import do_async
+
+result: Result[str, FetchError] = await do_async(
+    Ok(f"{user.name}: {profile.bio}")
+    for user in await fetch_user(42)
+    for profile in await fetch_profile(user.id)
+)
+```
+
+`do_async` accepts both sync and async generators.
+
+### `@as_result` / `@as_async_result`
+
+Wraps a function so that it returns `Ok(value)` on success and `Err(exception)`
+on specified exception types. Uncaught exception types propagate normally.
+
+```python
+@as_result(KeyError, ValueError)
+def parse_env(key: str) -> int:
+    return int(os.environ[key])
+
+parse_env("PORT")  # Result[int, KeyError | ValueError]
+```
+
+For async functions:
+
+```python
+@as_async_result(httpx.HTTPError)
+async def fetch(url: str) -> bytes:
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+        return resp.content
+
+await fetch("https://example.com")  # Result[bytes, httpx.HTTPError]
+```
+
+At least one exception type is required — calling `@as_result()` with no
+arguments raises `TypeError`.
 
 ## License
 
