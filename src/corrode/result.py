@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import functools
 import inspect
+import sys
 from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterator
 from typing import (
     Any,
@@ -17,7 +18,10 @@ from typing import (
     cast,
 )
 
-from typing_extensions import TypeIs
+if sys.version_info >= (3, 13):
+    from typing import TypeIs
+else:
+    from typing_extensions import TypeIs
 
 T_co = TypeVar("T_co", covariant=True)  # Success type
 E_co = TypeVar("E_co", covariant=True)  # Error type
