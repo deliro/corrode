@@ -6,8 +6,7 @@
       "bump-minor-pre-major": true,
       "extra-files": [
         "pyproject.toml"
-      ],
-      "last-release-sha": "0b855e1e38a08d6f0a4b0138b10c127c01e54ab4"
+      ]
     }
   }
 }
