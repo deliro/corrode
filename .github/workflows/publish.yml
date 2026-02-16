@@ -1,8 +1,8 @@
 ---
 on:
-  release:
-    types:
-      - published
+  push:
+    tags:
+      - "v*.*.*"
 
 name: Publish to PyPI
 
