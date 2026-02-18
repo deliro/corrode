@@ -20,7 +20,7 @@ from typing import (
 
 if sys.version_info >= (3, 13):
     from typing import TypeIs
-else:
+else:  # pragma: no cover
     from typing_extensions import TypeIs
 
 T_co = TypeVar("T_co", covariant=True)  # Success type

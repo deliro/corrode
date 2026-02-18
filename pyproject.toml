@@ -66,6 +66,7 @@ ignore = [
     "D107",  # missing docstring in __init__
     "D211",  # `no-blank-line-before-class`
     "D212",  # `multi-line-summary-first-line`
+    "TC003", # imports not behind TYPE_CHECKING — intentional throughout the project
 ]
 
 [tool.ruff.lint.per-file-ignores]
@@ -74,6 +75,8 @@ ignore = [
     "D",       # docstrings not required in tests
     "E731",    # lambda assignments are fine in tests
     "EM101",   # string literals in exceptions are fine in tests
+    "ERA001",  # section header comments are not commented-out code
+    "PERF401", # manual list.append in loops is fine in tests
     "FBT",     # boolean positional args are fine in tests
     "PLR2004", # magic values are fine in tests
     "PT009",   # use of unittest-style assertEqual
