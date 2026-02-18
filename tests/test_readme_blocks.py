@@ -1,9 +1,15 @@
 import re
+import sys
 import tempfile
 from pathlib import Path
 
 import pytest
 from mypy import api as mypy_api
+
+pytestmark = pytest.mark.skipif(
+    sys.version_info < (3, 12),
+    reason="README examples use Python 3.12+ syntax",
+)
 
 
 def extract_python_codeblocks(text: str) -> list[tuple[str, int]]:
