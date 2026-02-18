@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from corrode import (
-    Err,
-    Ok,
-    Result,
+from corrode import Err, Ok, Result
+from corrode.iterator import (
     collect,
     filter_err,
     filter_ok,

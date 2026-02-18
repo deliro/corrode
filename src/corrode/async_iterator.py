@@ -41,7 +41,7 @@ def _make_pending(
     }
 
 
-async def collect_async_unordered(
+async def collect_unordered(
     iterable: Iterable[_CoroOrTask[Result[T, E]]],
     *,
     concurrency: int | None = None,
@@ -61,8 +61,8 @@ async def collect_async_unordered(
 
     Example::
 
-        collect_async_unordered([fetch(1), fetch(2), fetch(3)])
-        collect_async_unordered([fetch(1), fetch(2)], concurrency=4)
+        collect_unordered([fetch(1), fetch(2), fetch(3)])
+        collect_unordered([fetch(1), fetch(2)], concurrency=4)
     """
     it = iter(iterable)
     pending = _make_pending(it, concurrency)
@@ -92,7 +92,7 @@ async def collect_async_unordered(
     return Ok(results)
 
 
-async def map_collect_async_unordered(
+async def map_collect_unordered(
     iterable: Iterable[T],
     f: Callable[[T], _CoroOrTask[Result[U, E]]],
     *,
@@ -113,16 +113,16 @@ async def map_collect_async_unordered(
 
     Example::
 
-        map_collect_async_unordered(user_ids, fetch_user)
-        map_collect_async_unordered(urls, fetch, concurrency=10)
+        map_collect_unordered(user_ids, fetch_user)
+        map_collect_unordered(urls, fetch, concurrency=10)
     """
-    return await collect_async_unordered(
+    return await collect_unordered(
         (f(element) for element in iterable),
         concurrency=concurrency,
     )
 
 
-async def partition_async_unordered(
+async def partition_unordered(
     iterable: Iterable[_CoroOrTask[Result[T, E]]],
     *,
     concurrency: int | None = None,
@@ -131,7 +131,7 @@ async def partition_async_unordered(
     Await an iterable of coroutines or tasks concurrently, splitting results into ``(oks, errs)``.
 
     Results are collected in completion order, not input order.
-    Unlike ``collect_async_unordered``, never short-circuits — all awaitables run to completion.
+    Unlike ``collect_unordered``, never short-circuits — all awaitables run to completion.
 
     *concurrency* limits how many run at the same time.
     ``None`` means unlimited — all are scheduled at once.
@@ -142,8 +142,8 @@ async def partition_async_unordered(
 
     Example::
 
-        oks, errs = await partition_async_unordered([fetch(1), fetch(2), fetch(3)])
-        oks, errs = await partition_async_unordered([fetch(1), fetch(2)], concurrency=4)
+        oks, errs = await partition_unordered([fetch(1), fetch(2), fetch(3)])
+        oks, errs = await partition_unordered([fetch(1), fetch(2)], concurrency=4)
     """
     it = iter(iterable)
     pending = _make_pending(it, concurrency)

@@ -30,9 +30,9 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
   - [`filter_err`](#filter_err)
   - [`try_reduce`](#try_reduce)
 - [Async iterator utilities](#async-iterator-utilities)
-  - [`collect_async_unordered`](#collect_async_unordered)
-  - [`map_collect_async_unordered`](#map_collect_async_unordered)
-  - [`partition_async_unordered`](#partition_async_unordered)
+  - [`collect_unordered`](#collect_unordered)
+  - [`map_collect_unordered`](#map_collect_unordered)
+  - [`partition_unordered`](#partition_unordered)
   - [`filter_ok_unordered`](#filter_ok_unordered)
   - [`filter_err_unordered`](#filter_err_unordered)
 - [License](#license)
@@ -976,10 +976,10 @@ elif is_err(result):
 
 ## Iterator utilities
 
-Functions for working with iterables of `Result` values. Import from `corrode`:
+Functions for working with iterables of `Result` values:
 
 ```python
-from corrode import collect, map_collect, partition, filter_ok, filter_err, try_reduce
+from corrode.iterator import collect, map_collect, partition, filter_ok, filter_err, try_reduce
 ```
 
 ### `collect`
@@ -988,7 +988,8 @@ Collect an iterable of `Result` values into `Ok[list]`. Returns the first
 `Err` encountered, short-circuiting the iteration:
 
 ```python
-from corrode import Ok, Err, Result, collect
+from corrode import Ok, Err, Result
+from corrode.iterator import collect
 
 results: list[Result[int, str]] = [Ok(1), Ok(2), Ok(3)]
 assert collect(results) == Ok([1, 2, 3])
@@ -1003,7 +1004,8 @@ Apply a function to each element and collect into `Ok[list]`. Returns the
 first `Err` produced, short-circuiting the iteration:
 
 ```python
-from corrode import Ok, Err, Result, map_collect
+from corrode import Ok, Err, Result
+from corrode.iterator import map_collect
 
 
 def parse(s: str) -> Result[int, str]:
@@ -1022,7 +1024,8 @@ Split an iterable of `Result` into `(oks, errs)`. Consumes all elements
 without short-circuiting:
 
 ```python
-from corrode import Ok, Err, Result, partition
+from corrode import Ok, Err, Result
+from corrode.iterator import partition
 
 results: list[Result[int, str]] = [Ok(1), Err("a"), Ok(2), Err("b")]
 oks, errs = partition(results)
@@ -1035,7 +1038,8 @@ assert errs == ["a", "b"]
 Yield the value from each `Ok`, skipping `Err` values:
 
 ```python
-from corrode import Ok, Err, Result, filter_ok
+from corrode import Ok, Err, Result
+from corrode.iterator import filter_ok
 
 results: list[Result[int, str]] = [Ok(1), Err("x"), Ok(2)]
 assert list(filter_ok(results)) == [1, 2]
@@ -1046,7 +1050,8 @@ assert list(filter_ok(results)) == [1, 2]
 Yield the error from each `Err`, skipping `Ok` values:
 
 ```python
-from corrode import Ok, Err, Result, filter_err
+from corrode import Ok, Err, Result
+from corrode.iterator import filter_err
 
 results: list[Result[int, str]] = [Ok(1), Err("x"), Ok(2), Err("y")]
 assert list(filter_err(results)) == ["x", "y"]
@@ -1057,7 +1062,8 @@ assert list(filter_err(results)) == ["x", "y"]
 Fold an iterable with a fallible function, short-circuiting on `Err`:
 
 ```python
-from corrode import Ok, Err, Result, try_reduce
+from corrode import Ok, Err, Result
+from corrode.iterator import try_reduce
 
 
 def safe_add(acc: int, x: int) -> Result[int, str]:
@@ -1074,13 +1080,13 @@ assert try_reduce([1, -1, 3], 0, safe_add) == Err("negative value: -1")
 
 Functions for concurrent processing of awaitables that return `Result`.
 All functions run tasks concurrently and return results in **completion order**,
-not input order. Import from `corrode`:
+not input order:
 
 ```python
-from corrode import (
-    collect_async_unordered,
-    map_collect_async_unordered,
-    partition_async_unordered,
+from corrode.async_iterator import (
+    collect_unordered,
+    map_collect_unordered,
+    partition_unordered,
     filter_ok_unordered,
     filter_err_unordered,
 )
@@ -1089,7 +1095,7 @@ from corrode import (
 All functions accept an optional `concurrency` parameter to limit how many
 tasks run at the same time. `None` (default) means unlimited.
 
-### `collect_async_unordered`
+### `collect_unordered`
 
 Await an iterable of coroutines or tasks concurrently, collecting results
 into `Ok[list]`. Returns the first `Err` encountered, cancelling remaining tasks:
@@ -1097,7 +1103,8 @@ into `Ok[list]`. Returns the first `Err` encountered, cancelling remaining tasks
 ```python
 import asyncio
 from dataclasses import dataclass
-from corrode import Ok, Err, Result, collect_async_unordered
+from corrode import Ok, Err, Result
+from corrode.async_iterator import collect_unordered
 
 
 @dataclass
@@ -1118,18 +1125,18 @@ async def fetch_user(user_id: int) -> Result[User, NotFound]:
 
 async def main() -> None:
     # Run all fetches concurrently (results come in completion order)
-    result = await collect_async_unordered([fetch_user(1), fetch_user(2), fetch_user(3)])
+    result = await collect_unordered([fetch_user(1), fetch_user(2), fetch_user(3)])
     assert result.map(len) == Ok(3)
 
     # With concurrency limit
-    result = await collect_async_unordered([fetch_user(i) for i in range(1, 11)], concurrency=3)
+    result = await collect_unordered([fetch_user(i) for i in range(1, 11)], concurrency=3)
     assert result.map(len) == Ok(10)
 
 
 asyncio.run(main())
 ```
 
-### `map_collect_async_unordered`
+### `map_collect_unordered`
 
 Apply an async function to each element concurrently and collect into `Ok[list]`.
 Returns the first `Err` produced, cancelling remaining tasks:
@@ -1137,7 +1144,8 @@ Returns the first `Err` produced, cancelling remaining tasks:
 ```python
 import asyncio
 from dataclasses import dataclass
-from corrode import Ok, Err, Result, map_collect_async_unordered
+from corrode import Ok, Err, Result
+from corrode.async_iterator import map_collect_unordered
 
 
 @dataclass
@@ -1160,27 +1168,28 @@ async def main() -> None:
     user_ids = [1, 2, 3, 4, 5]
 
     # Run all fetches concurrently
-    result = await map_collect_async_unordered(user_ids, fetch_user)
+    result = await map_collect_unordered(user_ids, fetch_user)
     assert result.map(len) == Ok(5)
 
     # Limit concurrency
-    result = await map_collect_async_unordered(user_ids, fetch_user, concurrency=2)
+    result = await map_collect_unordered(user_ids, fetch_user, concurrency=2)
     assert result.map(len) == Ok(5)
 
 
 asyncio.run(main())
 ```
 
-### `partition_async_unordered`
+### `partition_unordered`
 
 Await an iterable of coroutines or tasks concurrently, splitting results into
-`(oks, errs)`. Unlike `collect_async_unordered`, never short-circuits — all
+`(oks, errs)`. Unlike `collect_unordered`, never short-circuits — all
 awaitables run to completion:
 
 ```python
 import asyncio
 from dataclasses import dataclass
-from corrode import Ok, Err, Result, partition_async_unordered
+from corrode import Ok, Err, Result
+from corrode.async_iterator import partition_unordered
 
 
 @dataclass
@@ -1200,7 +1209,7 @@ async def fetch_user(user_id: int) -> Result[User, NotFound]:
 
 
 async def main() -> None:
-    oks, errs = await partition_async_unordered([
+    oks, errs = await partition_unordered([
         fetch_user(1),
         fetch_user(2),
         fetch_user(-1),  # will fail
@@ -1210,7 +1219,7 @@ async def main() -> None:
     assert errs[0] == NotFound(user_id=-1)
 
     # With concurrency limit
-    oks, errs = await partition_async_unordered(
+    oks, errs = await partition_unordered(
         [fetch_user(i) for i in range(-2, 5)],
         concurrency=3,
     )
@@ -1229,7 +1238,8 @@ Await coroutines or tasks concurrently, yielding `Ok` values as they complete.
 ```python
 import asyncio
 from dataclasses import dataclass
-from corrode import Ok, Err, Result, filter_ok_unordered
+from corrode import Ok, Err, Result
+from corrode.async_iterator import filter_ok_unordered
 
 
 @dataclass
@@ -1276,7 +1286,8 @@ Await coroutines or tasks concurrently, yielding `Err` values as they complete.
 ```python
 import asyncio
 from dataclasses import dataclass
-from corrode import Ok, Err, Result, filter_err_unordered
+from corrode import Ok, Err, Result
+from corrode.async_iterator import filter_err_unordered
 
 
 @dataclass
