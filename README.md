@@ -1,9 +1,18 @@
 # corrode
 
+A Rust-like `Result` type for Python 3.11+, fully type annotated.
+
+<div align="center">
+
+> *Explicit is better than implicit.*
+> *Errors should never pass silently.*
+>
+> — The Zen of Python
+
 [![CI](https://github.com/deliro/corrode/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/deliro/corrode/actions/workflows/ci.yml?query=branch%3Amain)
 [![codecov](https://codecov.io/gh/deliro/corrode/branch/main/graph/badge.svg)](https://codecov.io/gh/deliro/corrode)
 
-A Rust-like `Result` type for Python 3.11+, fully type annotated.
+</div>
 
 ## Table of Contents
 
