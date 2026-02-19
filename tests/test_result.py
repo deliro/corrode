@@ -634,3 +634,45 @@ class TestAsAsyncResult:
             @as_async_result("not an exception type")  # type: ignore[arg-type]
             async def f() -> int:
                 return 1
+
+
+# ---------------------------------------------------------------------------
+# zip
+# ---------------------------------------------------------------------------
+
+
+class TestZip:
+    def test_ok_zip_ok(self) -> None:
+        assert Ok(1).zip(Ok("a")) == Ok((1, "a"))
+
+    def test_ok_zip_ok_ok(self) -> None:
+        assert Ok(1).zip(Ok("a"), Ok(3.0)) == Ok((1, "a", 3.0))
+
+    def test_ok_zip_ok_ok_ok(self) -> None:
+        assert Ok(1).zip(Ok("a"), Ok(3.0), Ok(True)) == Ok((1, "a", 3.0, True))
+
+    def test_ok_zip_ok_ok_ok_ok(self) -> None:
+        assert Ok(1).zip(Ok("a"), Ok(3.0), Ok(True), Ok(b"x")) == Ok((1, "a", 3.0, True, b"x"))
+
+    def test_ok_zip_err(self) -> None:
+        assert Ok(1).zip(Err("bad")) == Err("bad")
+
+    def test_ok_zip_ok_err(self) -> None:
+        assert Ok(1).zip(Ok("a"), Err("bad")) == Err("bad")
+
+    def test_ok_zip_err_ok(self) -> None:
+        # first Err is returned, second Ok is never inspected
+        assert Ok(1).zip(Err("first"), Ok("ignored")) == Err("first")
+
+    def test_ok_zip_err_err(self) -> None:
+        # first Err is returned
+        assert Ok(1).zip(Err("first"), Err("second")) == Err("first")
+
+    def test_err_zip_ok(self) -> None:
+        assert Err("bad").zip(Ok(1)) == Err("bad")
+
+    def test_err_zip_ok_ok(self) -> None:
+        assert Err("bad").zip(Ok(1), Ok(2)) == Err("bad")
+
+    def test_err_zip_err(self) -> None:
+        assert Err("bad").zip(Err("other")) == Err("bad")

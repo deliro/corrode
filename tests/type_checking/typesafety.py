@@ -15,8 +15,10 @@ from corrode import (
     UnwrapError,
     as_async_result,
     as_result,
+    async_iterator,
     is_err,
     is_ok,
+    iterator,
 )
 
 # ---------------------------------------------------------------------------
@@ -242,3 +244,44 @@ async def _async_examples() -> None:
 
 _ue = UnwrapError(Ok(1), "test")
 _ue_result: Result[object, object] = _ue.result
+
+# ---------------------------------------------------------------------------
+# 14. zip
+# ---------------------------------------------------------------------------
+
+
+def make_int_result() -> Result[int, str]:
+    return Ok(1)
+
+
+def make_str_result() -> Result[str, str]:
+    return Ok("a")
+
+
+def make_float_result() -> Result[float, str]:
+    return Ok(3.0)
+
+
+def make_bool_result() -> Result[bool, str]:
+    return Ok(True)
+
+
+# Realistic usage: runtime Results with unknown Ok/Err
+_zip2: Result[tuple[int, str], str] = make_int_result().zip(make_str_result())
+_zip3: Result[tuple[int, str, float], str] = make_int_result().zip(
+    make_str_result(), make_float_result(),
+)
+_zip4: Result[tuple[int, str, float, bool], str] = make_int_result().zip(
+    make_str_result(), make_float_result(), make_bool_result(),
+)
+
+# Err.zip always returns Err[E_co]
+_zip_err_self: Err[str] = Err("bad").zip(make_int_result())
+_zip_err_self2: Err[str] = Err("bad").zip(make_int_result(), make_str_result())
+
+# ---------------------------------------------------------------------------
+# 15. iterator / async_iterator module re-exports
+# ---------------------------------------------------------------------------
+
+_iter_mod = iterator
+_async_iter_mod = async_iterator

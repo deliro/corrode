@@ -16,6 +16,7 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
   - [Pattern matching](#pattern-matching)
   - [Transforming values](#transforming-values)
   - [Chaining with `and_then` / `or_else`](#chaining-with-and_then--or_else)
+  - [Combining results with `zip`](#combining-results-with-zip)
   - [Predicates](#predicates)
   - [Inspecting](#inspecting)
   - [Async methods](#async-methods)
@@ -35,6 +36,9 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
   - [`partition`](#partition)
   - [`filter_ok_unordered`](#filter_ok_unordered)
   - [`filter_err_unordered`](#filter_err_unordered)
+  - [`filter_ok`](#filter_ok-1)
+  - [`filter_err`](#filter_err-1)
+  - [`try_reduce`](#try_reduce-1)
 - [License](#license)
 
 ## Installation
@@ -629,6 +633,45 @@ assert result == Ok("Alice")  # Found in DB
 
 Async variants: `and_then_async`, `or_else_async`.
 
+### Combining results with `zip`
+
+Combine two to five independent `Result` values into a single `Ok` tuple.
+Returns the first `Err` encountered if any result fails:
+
+```python
+from corrode import Ok, Err, Result
+
+
+def parse_int(s: str) -> Result[int, str]:
+    return Ok(int(s)) if s.isdigit() else Err(f"not a number: {s!r}")
+
+
+def parse_float(s: str) -> Result[float, str]:
+    try:
+        return Ok(float(s))
+    except ValueError:
+        return Err(f"not a float: {s!r}")
+
+
+# All Ok — get a tuple
+assert parse_int("3").zip(parse_float("1.5")) == Ok((3, 1.5))
+
+# Any Err — get the first error
+assert parse_int("x").zip(parse_float("1.5")) == Err("not a number: 'x'")
+assert parse_int("3").zip(parse_float("y")) == Err("not a float: 'y'")
+
+# Works with up to four extra arguments
+assert Ok(1).zip(Ok(2), Ok(3), Ok(4)) == Ok((1, 2, 3, 4))
+```
+
+`Err.zip` always returns `self` without inspecting the other arguments:
+
+```python
+from corrode import Ok, Err
+
+assert Err("already failed").zip(Ok(1), Ok(2)) == Err("already failed")
+```
+
 ### Predicates
 
 Check conditions on the contained value without unwrapping:
@@ -1078,9 +1121,7 @@ assert try_reduce([1, -1, 3], 0, safe_add) == Err("negative value: -1")
 
 ## Async iterator utilities
 
-Functions for concurrent processing of awaitables that return `Result`.
-All functions run tasks concurrently and return results in **completion order**,
-not input order:
+Functions for concurrent processing of awaitables that return `Result`:
 
 ```python
 from corrode.async_iterator import (
@@ -1089,11 +1130,18 @@ from corrode.async_iterator import (
     partition,
     filter_ok_unordered,
     filter_err_unordered,
+    filter_ok,
+    filter_err,
+    try_reduce,
 )
 ```
 
 All functions accept an optional `concurrency` parameter to limit how many
 tasks run at the same time. `None` (default) means unlimited.
+
+`collect`, `map_collect`, `partition`, `filter_ok`, and `filter_err` return
+results in **input order**. `filter_ok_unordered` and `filter_err_unordered`
+yield in **completion order** (faster, but unordered).
 
 ### `collect`
 
@@ -1313,6 +1361,140 @@ async def main() -> None:
     async for err in filter_err_unordered([fetch_user(1), fetch_user(-1), fetch_user(2)]):
         errors.append(err)
     assert errors == [NotFound(user_id=-1)]
+
+
+asyncio.run(main())
+```
+
+### `filter_ok`
+
+Await coroutines or tasks concurrently, yielding `Ok` values in **input order**.
+`Err` values are silently skipped. Later-completing tasks are buffered until
+all earlier ones have been yielded.
+
+Unlike `filter_ok_unordered`, `concurrency` is required and cannot be `None`
+because the reorder buffer would otherwise be unbounded:
+
+```python
+import asyncio
+from dataclasses import dataclass
+from corrode import Ok, Err, Result
+from corrode.async_iterator import filter_ok
+
+
+@dataclass
+class User:
+    id: int
+    name: str
+
+
+@dataclass
+class NotFound:
+    user_id: int
+
+
+async def fetch_user(user_id: int) -> Result[User, NotFound]:
+    if user_id <= 0:
+        return Err(NotFound(user_id=user_id))
+    return Ok(User(id=user_id, name=f"User{user_id}"))
+
+
+async def main() -> None:
+    # Errors are skipped, successes come out in input order
+    users = [
+        user async for user in filter_ok(
+            [fetch_user(1), fetch_user(-1), fetch_user(2), fetch_user(3)],
+            concurrency=4,
+        )
+    ]
+    assert users == [User(id=1, name="User1"), User(id=2, name="User2"), User(id=3, name="User3")]
+
+
+asyncio.run(main())
+```
+
+### `filter_err`
+
+Await coroutines or tasks concurrently, yielding `Err` values in **input order**.
+`Ok` values are silently skipped. Like `filter_ok`, requires an explicit `concurrency`:
+
+```python
+import asyncio
+from dataclasses import dataclass
+from corrode import Ok, Err, Result
+from corrode.async_iterator import filter_err
+
+
+@dataclass
+class User:
+    id: int
+
+
+@dataclass
+class NotFound:
+    user_id: int
+
+
+async def fetch_user(user_id: int) -> Result[User, NotFound]:
+    if user_id <= 0:
+        return Err(NotFound(user_id=user_id))
+    return Ok(User(id=user_id))
+
+
+async def main() -> None:
+    errors = [
+        err async for err in filter_err(
+            [fetch_user(1), fetch_user(-1), fetch_user(2), fetch_user(-2)],
+            concurrency=4,
+        )
+    ]
+    # Errors preserve relative input order: -1 before -2
+    assert errors == [NotFound(user_id=-1), NotFound(user_id=-2)]
+
+
+asyncio.run(main())
+```
+
+### `try_reduce`
+
+Await each coroutine or task **sequentially**, folding results with a fallible
+function. Short-circuits on the first `Err` and closes remaining coroutines.
+
+Unlike `collect` / `partition`, tasks run one at a time because each awaited
+value must be passed to the accumulator before the next task can start:
+
+```python
+import asyncio
+from corrode import Ok, Err, Result
+from corrode.async_iterator import try_reduce
+
+
+async def fetch_price(item_id: int) -> int:
+    prices = {1: 100, 2: 250, 3: 75}
+    return prices.get(item_id, -1)
+
+
+def accumulate(total: int, price: int) -> Result[int, str]:
+    if price < 0:
+        return Err(f"unknown item with price {price}")
+    return Ok(total + price)
+
+
+async def main() -> None:
+    result = await try_reduce(
+        [fetch_price(1), fetch_price(2), fetch_price(3)],
+        initial=0,
+        f=accumulate,
+    )
+    assert result == Ok(425)
+
+    # Short-circuits on the first Err
+    result = await try_reduce(
+        [fetch_price(1), fetch_price(99), fetch_price(3)],
+        initial=0,
+        f=accumulate,
+    )
+    assert result == Err("unknown item with price -1")
 
 
 asyncio.run(main())

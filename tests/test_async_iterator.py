@@ -7,10 +7,13 @@ import pytest
 from corrode import Err, Ok
 from corrode.async_iterator import (
     collect,
+    filter_err,
     filter_err_unordered,
+    filter_ok,
     filter_ok_unordered,
     map_collect,
     partition,
+    try_reduce,
 )
 
 
@@ -670,3 +673,207 @@ class TestFilterErrUnordered:
         with pytest.raises(RuntimeError, match="oops"):
             async for _ in filter_err_unordered([boom(), err_after("x")]):
                 pass
+
+
+# ---------------------------------------------------------------------------
+# filter_ok (ordered)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterOk:
+    async def test_yields_ok_values(self) -> None:
+        results = [v async for v in filter_ok(
+            [ok_after(1), err_after("x"), ok_after(2)], concurrency=4,
+        )]
+        assert results == [1, 2]
+
+    async def test_empty(self) -> None:
+        assert [v async for v in filter_ok([], concurrency=4)] == []
+
+    async def test_all_err_yields_nothing(self) -> None:
+        assert [v async for v in filter_ok(
+            [err_after("a"), err_after("b")], concurrency=4,
+        )] == []
+
+    async def test_order_preserved(self) -> None:
+        # fast completes before slow, but output must follow input order
+        order: list[int] = []
+        async for v in filter_ok(
+            [ok_after(1, delay=0.1), ok_after(2, delay=0.0)], concurrency=4,
+        ):
+            order.append(v)
+        assert order == [1, 2]
+
+    async def test_err_skipped_in_order(self) -> None:
+        results = [v async for v in filter_ok(
+            [ok_after(1), err_after("x"), ok_after(3)], concurrency=4,
+        )]
+        assert results == [1, 3]
+
+    async def test_concurrency_respected(self) -> None:
+        in_flight: list[int] = []
+        peak: list[int] = []
+
+        async def tracked(v: int) -> Ok[int]:
+            in_flight.append(v)
+            peak.append(len(in_flight))
+            await asyncio.sleep(0.02)
+            in_flight.remove(v)
+            return Ok(v)
+
+        async for _ in filter_ok([tracked(i) for i in range(8)], concurrency=3):
+            pass
+        assert max(peak) <= 3
+
+    async def test_exception_propagates(self) -> None:
+        async def boom() -> Ok[int]:
+            raise RuntimeError("oops")
+
+        with pytest.raises(RuntimeError, match="oops"):
+            async for _ in filter_ok([boom(), ok_after(1)], concurrency=4):
+                pass
+
+    async def test_concurrency_one_sequential(self) -> None:
+        order: list[int] = []
+
+        async def tracked(v: int) -> Ok[int]:
+            order.append(v)
+            await asyncio.sleep(0)
+            return Ok(v)
+
+        async for _ in filter_ok([tracked(i) for i in range(4)], concurrency=1):
+            pass
+        assert order == [0, 1, 2, 3]
+
+
+# ---------------------------------------------------------------------------
+# filter_err (ordered)
+# ---------------------------------------------------------------------------
+
+
+class TestFilterErr:
+    async def test_yields_err_values(self) -> None:
+        results = [e async for e in filter_err(
+            [ok_after(1), err_after("x"), err_after("y")], concurrency=4,
+        )]
+        assert results == ["x", "y"]
+
+    async def test_empty(self) -> None:
+        assert [e async for e in filter_err([], concurrency=4)] == []
+
+    async def test_all_ok_yields_nothing(self) -> None:
+        assert [e async for e in filter_err(
+            [ok_after(1), ok_after(2)], concurrency=4,
+        )] == []
+
+    async def test_order_preserved(self) -> None:
+        order: list[str] = []
+        async for e in filter_err(
+            [err_after("slow", delay=0.1), err_after("fast", delay=0.0)], concurrency=4,
+        ):
+            order.append(e)
+        assert order == ["slow", "fast"]
+
+    async def test_ok_skipped_in_order(self) -> None:
+        results = [e async for e in filter_err(
+            [err_after("a"), ok_after(1), err_after("b")], concurrency=4,
+        )]
+        assert results == ["a", "b"]
+
+    async def test_concurrency_respected(self) -> None:
+        in_flight: list[int] = []
+        peak: list[int] = []
+
+        async def tracked(v: int) -> Err[int]:
+            in_flight.append(v)
+            peak.append(len(in_flight))
+            await asyncio.sleep(0.02)
+            in_flight.remove(v)
+            return Err(v)
+
+        async for _ in filter_err([tracked(i) for i in range(8)], concurrency=3):
+            pass
+        assert max(peak) <= 3
+
+    async def test_exception_propagates(self) -> None:
+        async def boom() -> Err[str]:
+            raise RuntimeError("oops")
+
+        with pytest.raises(RuntimeError, match="oops"):
+            async for _ in filter_err([boom(), err_after("x")], concurrency=4):
+                pass
+
+
+# ---------------------------------------------------------------------------
+# try_reduce
+# ---------------------------------------------------------------------------
+
+
+async def int_after(value: int, delay: float = 0.0) -> int:
+    await asyncio.sleep(delay)
+    return value
+
+
+class TestTryReduce:
+    async def test_all_ok(self) -> None:
+        def add(acc: int, x: int) -> Ok[int]:
+            return Ok(acc + x)
+
+        result = await try_reduce([int_after(1), int_after(2), int_after(3)], 0, add)
+        assert result == Ok(6)
+
+    async def test_empty(self) -> None:
+        def add(acc: int, x: int) -> Ok[int]:
+            return Ok(acc + x)
+
+        result = await try_reduce([], 42, add)
+        assert result == Ok(42)
+
+    async def test_short_circuits_on_err(self) -> None:
+        called: list[int] = []
+
+        def maybe_fail(acc: int, x: int) -> Ok[int] | Err[str]:
+            called.append(x)
+            if x < 0:
+                return Err(f"negative: {x}")
+            return Ok(acc + x)
+
+        result = await try_reduce(
+            [int_after(1), int_after(-1), int_after(3)], 0, maybe_fail,
+        )
+        assert result == Err("negative: -1")
+        assert called == [1, -1]
+
+    async def test_accumulator_threads_through(self) -> None:
+        def multiply(acc: int, x: int) -> Ok[int]:
+            return Ok(acc * x)
+
+        result = await try_reduce(
+            [int_after(2), int_after(3), int_after(4)], 1, multiply,
+        )
+        assert result == Ok(24)
+
+    async def test_exception_propagates(self) -> None:
+        async def boom() -> int:
+            raise RuntimeError("oops")
+
+        def f(acc: int, x: int) -> Ok[int]:
+            return Ok(acc + x)
+
+        with pytest.raises(RuntimeError, match="oops"):
+            await try_reduce([boom()], 0, f)
+
+    async def test_sequential_execution(self) -> None:
+        # try_reduce must be sequential: each item is awaited before calling f
+        order: list[int] = []
+
+        async def tracked(v: int) -> int:
+            order.append(v)
+            await asyncio.sleep(0)
+            return v
+
+        def f(acc: int, x: int) -> Ok[int]:
+            return Ok(acc + x)
+
+        await try_reduce([tracked(1), tracked(2), tracked(3)], 0, f)
+        assert order == [1, 2, 3]

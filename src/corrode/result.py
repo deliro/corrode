@@ -16,6 +16,7 @@ from typing import (
     TypeAlias,
     TypeVar,
     cast,
+    overload,
 )
 
 if sys.version_info >= (3, 13):
@@ -30,6 +31,11 @@ F = TypeVar("F")
 P = ParamSpec("P")
 R = TypeVar("R")
 TBE = TypeVar("TBE", bound=BaseException)
+T2 = TypeVar("T2")
+T3 = TypeVar("T3")
+T4 = TypeVar("T4")
+T5 = TypeVar("T5")
+E2 = TypeVar("E2")
 
 
 class Ok(Generic[T_co]):
@@ -325,6 +331,45 @@ class Ok(Generic[T_co]):
         """
         return self
 
+    @overload
+    def zip(self, r1: Result[T2, E2], /) -> Result[tuple[T_co, T2], E2]: ...
+
+    @overload
+    def zip(
+        self, r1: Result[T2, E2], r2: Result[T3, E2], /,
+    ) -> Result[tuple[T_co, T2, T3], E2]: ...
+
+    @overload
+    def zip(
+        self, r1: Result[T2, E2], r2: Result[T3, E2], r3: Result[T4, E2], /,
+    ) -> Result[tuple[T_co, T2, T3, T4], E2]: ...
+
+    @overload
+    def zip(
+        self, r1: Result[T2, E2], r2: Result[T3, E2], r3: Result[T4, E2], r4: Result[T5, E2], /,
+    ) -> Result[tuple[T_co, T2, T3, T4, T5], E2]: ...
+
+    def zip(self, *results: Result[Any, Any]) -> Result[Any, Any]:
+        """
+        Combine this ``Ok`` with one to four other ``Result`` values into a tuple.
+
+        Returns ``Ok`` of a tuple of all values if all results are ``Ok``.
+        Returns the first ``Err`` encountered otherwise.
+
+        Example::
+
+            Ok(1).zip(Ok("a"))           # Ok((1, "a"))
+            Ok(1).zip(Ok("a"), Ok(3.0))  # Ok((1, "a", 3.0))
+            Ok(1).zip(Err("bad"))        # Err("bad")
+        """
+        values: list[Any] = [self._value]
+        for r in results:
+            match r:
+                case Ok(v):
+                    values.append(v)
+                case Err():
+                    return r
+        return Ok(tuple(values))
 
 class _DoError(Exception):
 
@@ -649,6 +694,19 @@ class Err(Generic[E_co]):
         Return the original result unchanged.
         """
         await op(self._value)
+        return self
+
+    def zip(self, *_results: Result[Any, Any]) -> Err[E_co]:
+        """
+        Combine this ``Err`` with other ``Result`` values.
+
+        Since this is an ``Err``, always returns ``self`` without inspecting the others.
+
+        Example::
+
+            Err("bad").zip(Ok(1))        # Err("bad")
+            Err("bad").zip(Ok(1), Ok(2)) # Err("bad")
+        """
         return self
 
 

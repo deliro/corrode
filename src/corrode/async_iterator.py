@@ -286,3 +286,155 @@ async def filter_err_unordered(
             next_item = next(it, None)
             if next_item is not None:
                 pending.add(asyncio.ensure_future(next_item))
+
+
+async def filter_ok(
+    iterable: Iterable[_CoroOrTask[Result[T, E]]],
+    *,
+    concurrency: int,
+) -> AsyncIterator[T]:
+    """
+    Await coroutines or tasks concurrently, yielding ``Ok`` values in input order.
+
+    ``Err`` values are silently skipped.
+    Values are yielded in input order — later-completing tasks are buffered until
+    all earlier ones have been yielded.
+
+    *concurrency* controls the size of the sliding window of in-flight tasks.
+    Unlike ``filter_ok_unordered``, ``None`` is not accepted because the
+    reorder buffer would be unbounded.
+
+    **Exceptions**: if a coroutine raises, the exception propagates and all remaining
+    tasks are cancelled. If multiple tasks raise in the same ``asyncio.wait`` batch,
+    only one exception propagates — the rest are silently discarded.
+
+    Example::
+
+        async for user in filter_ok([fetch(1), fetch(2), fetch(3)], concurrency=4):
+            print(user)
+    """
+    it = iter(iterable)
+    pending, next_idx = _make_pending_indexed(it, concurrency)
+    buf: dict[int, Result[T, E]] = {}
+    next_yield = 0
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            try:
+                idx, result = task.result()
+            except BaseException:
+                for other in done:
+                    if other is not task:
+                        other.exception()
+                await _cancel_all(pending, it)
+                raise
+            buf[idx] = result
+            next_item = next(it, None)
+            if next_item is not None:
+                pending.add(_wrap_indexed(next_idx, next_item))
+                next_idx += 1
+
+        while next_yield in buf:
+            match buf.pop(next_yield):
+                case Ok(value):
+                    yield value
+                case Err():
+                    pass
+            next_yield += 1
+
+
+async def filter_err(
+    iterable: Iterable[_CoroOrTask[Result[T, E]]],
+    *,
+    concurrency: int,
+) -> AsyncIterator[E]:
+    """
+    Await coroutines or tasks concurrently, yielding ``Err`` values in input order.
+
+    ``Ok`` values are silently skipped.
+    Values are yielded in input order — later-completing tasks are buffered until
+    all earlier ones have been yielded.
+
+    *concurrency* controls the size of the sliding window of in-flight tasks.
+    Unlike ``filter_err_unordered``, ``None`` is not accepted because the
+    reorder buffer would be unbounded.
+
+    **Exceptions**: if a coroutine raises, the exception propagates and all remaining
+    tasks are cancelled. If multiple tasks raise in the same ``asyncio.wait`` batch,
+    only one exception propagates — the rest are silently discarded.
+
+    Example::
+
+        async for err in filter_err([fetch(1), fetch(2), fetch(3)], concurrency=4):
+            print(err)
+    """
+    it = iter(iterable)
+    pending, next_idx = _make_pending_indexed(it, concurrency)
+    buf: dict[int, Result[T, E]] = {}
+    next_yield = 0
+
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for task in done:
+            try:
+                idx, result = task.result()
+            except BaseException:
+                for other in done:
+                    if other is not task:
+                        other.exception()
+                await _cancel_all(pending, it)
+                raise
+            buf[idx] = result
+            next_item = next(it, None)
+            if next_item is not None:
+                pending.add(_wrap_indexed(next_idx, next_item))
+                next_idx += 1
+
+        while next_yield in buf:
+            match buf.pop(next_yield):
+                case Ok():
+                    pass
+                case Err(e):
+                    yield e
+            next_yield += 1
+
+
+async def try_reduce(
+    iterable: Iterable[_CoroOrTask[T]],
+    initial: U,
+    f: Callable[[U, T], Result[U, E]],
+) -> Result[U, E]:
+    """
+    Await each coroutine or task sequentially, folding with *f* and short-circuiting on ``Err``.
+
+    Unlike the async ``collect`` / ``partition`` family, tasks run one at a time —
+    each awaited value is passed to *f* before the next is awaited, because the
+    accumulator depends on the previous step.
+
+    Example::
+
+        async def fetch_int(url: str) -> int: ...
+
+        def safe_add(acc: int, x: int) -> Result[int, str]:
+            if x < 0:
+                return Err(f"negative: {x}")
+            return Ok(acc + x)
+
+        await try_reduce([fetch_int(u1), fetch_int(u2)], 0, safe_add)
+    """
+    it = iter(iterable)
+    acc: U = initial
+    for item in it:
+        value: T = await item
+        match f(acc, value):
+            case Ok(new_acc):
+                acc = new_acc
+            case Err() as err:
+                for remaining in it:
+                    if isinstance(remaining, asyncio.Task):
+                        remaining.cancel()
+                    else:
+                        remaining.close()
+                return err
+    return Ok(acc)
