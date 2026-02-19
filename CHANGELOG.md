@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.0](https://github.com/deliro/corrode/compare/v0.0.1...v0.1.0) (2026-02-19)
+
+
+### Features
+
+* `Result.zip` & more async iterators ([2976fa0](https://github.com/deliro/corrode/commit/2976fa037b74bf95c9f614514859f8f5f2a36e42))
+* **iterator:** async functions that collect lists (`collect`, ([dced816](https://github.com/deliro/corrode/commit/dced816128776d0ff50e88349aaffdfcebed20fe))
+* iterators ([a79c97d](https://github.com/deliro/corrode/commit/a79c97d1fc7eac18406224f70dcaf4f2a382d4f7))
+
+
+### Bug Fixes
+
+* **tests:** README.md code blocks run only on Python3.12+ versions ([b57b0ed](https://github.com/deliro/corrode/commit/b57b0eddcb94a734fe37ef45017d18f889e01ec6))
+* update uv.lock on release ([891e8cd](https://github.com/deliro/corrode/commit/891e8cda2c0dcba9a67bf1ceae0f0883691ec7a4))
+
+
+### Documentation
+
+* rewrite documentation and validate code blocks ([8c1ff91](https://github.com/deliro/corrode/commit/8c1ff91c5ebbc84f05ccdcc467825f47170f3c68))
+
 ## [0.0.1](https://github.com/deliro/corrode/compare/v0.0.0...v0.0.1) (2026-02-16)
 
 
