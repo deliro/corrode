@@ -1509,6 +1509,11 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+## Acknowledgements
+
+`corrode` is inspired by and originally forked from [rustedpy/result](https://github.com/rustedpy/result). 
+We are grateful for that library's existence — it laid the foundation for bringing Rust-style result types to Python and made this project possible.
+
 ## License
 
 MIT License
