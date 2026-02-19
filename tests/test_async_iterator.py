@@ -6,11 +6,11 @@ import pytest
 
 from corrode import Err, Ok
 from corrode.async_iterator import (
-    collect_unordered,
+    collect,
     filter_err_unordered,
     filter_ok_unordered,
-    map_collect_unordered,
-    partition_unordered,
+    map_collect,
+    partition,
 )
 
 
@@ -29,34 +29,32 @@ async def err_after(value: str, delay: float = 0.0) -> Err[str]:
 # ---------------------------------------------------------------------------
 
 
-class TestCollectUnorderedBasic:
+class TestCollectBasic:
     async def test_empty(self) -> None:
-        result = await collect_unordered([])
+        result = await collect([])
         assert result == Ok([])
 
     async def test_all_ok(self) -> None:
-        result = await collect_unordered([ok_after(1), ok_after(2), ok_after(3)])
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [1, 2, 3]
+        result = await collect([ok_after(1), ok_after(2), ok_after(3)])
+        assert result == Ok([1, 2, 3])
 
     async def test_single_ok(self) -> None:
-        assert await collect_unordered([ok_after(42)]) == Ok([42])
+        assert await collect([ok_after(42)]) == Ok([42])
 
     async def test_single_err(self) -> None:
-        assert await collect_unordered([err_after("boom")]) == Err("boom")
+        assert await collect([err_after("boom")]) == Err("boom")
 
     async def test_first_err_returned(self) -> None:
         # both fail, first to complete wins
-        result = await collect_unordered([
+        result = await collect([
             err_after("first", delay=0.0),
             err_after("second", delay=0.1),
         ])
         assert result == Err("first")
 
     async def test_err_among_oks(self) -> None:
-        result = await collect_unordered([ok_after(1), err_after("bad"), ok_after(3)])
-        assert isinstance(result, Err)
-        assert result.err_value == "bad"
+        result = await collect([ok_after(1), err_after("bad"), ok_after(3)])
+        assert result == Err("bad")
 
 
 # ---------------------------------------------------------------------------
@@ -75,17 +73,16 @@ class TestConcurrencyUnlimited:
             await asyncio.sleep(0.05)
             return Ok(v)
 
-        result = await collect_unordered(
+        result = await collect(
             [tracked(i) for i in range(5)],
             concurrency=None,
         )
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == list(range(5))
+        assert result == Ok([0, 1, 2, 3, 4])
         # all tasks started within a small window (< 0.02s)
         assert max(started_at) - min(started_at) < 0.02
 
     async def test_empty(self) -> None:
-        assert await collect_unordered([], concurrency=None) == Ok([])
+        assert await collect([], concurrency=None) == Ok([])
 
     async def test_err_cancels_pending(self) -> None:
         cancelled: list[int] = []
@@ -98,7 +95,7 @@ class TestConcurrencyUnlimited:
                 cancelled.append(v)
                 raise
 
-        result = await collect_unordered(
+        result = await collect(
             [err_after("boom", delay=0.0), slow_ok(1), slow_ok(2)],
             concurrency=None,
         )
@@ -113,12 +110,11 @@ class TestConcurrencyUnlimited:
 
 class TestConcurrencyOne:
     async def test_all_ok(self) -> None:
-        result = await collect_unordered(
+        result = await collect(
             [ok_after(1), ok_after(2), ok_after(3)],
             concurrency=1,
         )
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [1, 2, 3]
+        assert result == Ok([1, 2, 3])
 
     async def test_runs_sequentially(self) -> None:
         order: list[int] = []
@@ -128,7 +124,7 @@ class TestConcurrencyOne:
             await asyncio.sleep(0)
             return Ok(v)
 
-        await collect_unordered(
+        await collect(
             [tracked(1), tracked(2), tracked(3)],
             concurrency=1,
         )
@@ -143,7 +139,7 @@ class TestConcurrencyOne:
             await asyncio.sleep(0)
             return Ok(v)
 
-        result = await collect_unordered(
+        result = await collect(
             [err_after("stop"), tracked_ok(1), tracked_ok(2)],
             concurrency=1,
         )
@@ -152,7 +148,7 @@ class TestConcurrencyOne:
         assert started == []
 
     async def test_empty(self) -> None:
-        assert await collect_unordered([], concurrency=1) == Ok([])
+        assert await collect([], concurrency=1) == Ok([])
 
 
 # ---------------------------------------------------------------------------
@@ -162,12 +158,11 @@ class TestConcurrencyOne:
 
 class TestConcurrencyN:
     async def test_all_ok(self) -> None:
-        result = await collect_unordered(
+        result = await collect(
             [ok_after(i) for i in range(10)],
             concurrency=3,
         )
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == list(range(10))
+        assert result == Ok(list(range(10)))
 
     async def test_at_most_n_concurrent(self) -> None:
         in_flight: list[int] = []
@@ -180,7 +175,7 @@ class TestConcurrencyN:
             in_flight.remove(v)
             return Ok(v)
 
-        await collect_unordered(
+        await collect(
             [tracked(i) for i in range(8)],
             concurrency=3,
         )
@@ -197,7 +192,7 @@ class TestConcurrencyN:
                 cancelled.append(v)
                 raise
 
-        result = await collect_unordered(
+        result = await collect(
             [slow_ok(0), slow_ok(1), err_after("boom", delay=0.0), slow_ok(3)],
             concurrency=3,
         )
@@ -208,15 +203,14 @@ class TestConcurrencyN:
         assert sorted(cancelled) == [0, 1]
 
     async def test_concurrency_larger_than_input(self) -> None:
-        result = await collect_unordered(
+        result = await collect(
             [ok_after(i) for i in range(3)],
             concurrency=100,
         )
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [0, 1, 2]
+        assert result == Ok([0, 1, 2])
 
     async def test_empty(self) -> None:
-        assert await collect_unordered([], concurrency=4) == Ok([])
+        assert await collect([], concurrency=4) == Ok([])
 
     async def test_remaining_coros_not_started_after_err(self) -> None:
         # 6 coroutines, concurrency=3: first window is [0, 1, 2],
@@ -228,12 +222,46 @@ class TestConcurrencyN:
             await asyncio.sleep(10)
             return Ok(v)
 
-        result = await collect_unordered(
+        result = await collect(
             [err_after("stop"), slow(1), slow(2), slow(3), slow(4), slow(5)],
             concurrency=3,
         )
         assert result == Err("stop")
         assert all(v <= 2 for v in started)
+
+
+# ---------------------------------------------------------------------------
+# Order guarantee
+# ---------------------------------------------------------------------------
+
+
+class TestOrderGuarantee:
+    async def test_order_preserved_with_different_delays(self) -> None:
+        # tasks complete in reverse order but result must be in input order
+        result = await collect([
+            ok_after(1, delay=0.1),
+            ok_after(2, delay=0.05),
+            ok_after(3, delay=0.0),
+        ])
+        assert result == Ok([1, 2, 3])
+
+    async def test_order_preserved_with_concurrency(self) -> None:
+        result = await collect(
+            [ok_after(i, delay=(9 - i) * 0.01) for i in range(10)],
+            concurrency=3,
+        )
+        assert result == Ok(list(range(10)))
+
+    async def test_partition_order_preserved(self) -> None:
+        # interleaved ok/err with different delays
+        oks, errs = await partition([
+            ok_after(1, delay=0.1),
+            err_after("a", delay=0.0),
+            ok_after(2, delay=0.05),
+            err_after("b", delay=0.08),
+        ])
+        assert oks == [1, 2]
+        assert errs == ["a", "b"]
 
 
 # ---------------------------------------------------------------------------
@@ -247,7 +275,7 @@ class TestExceptionPropagation:
             raise ValueError("oops")
 
         with pytest.raises(ValueError, match="oops"):
-            await collect_unordered([boom()])
+            await collect([boom()])
 
     async def test_exception_cancels_pending(self) -> None:
         cancelled: list[int] = []
@@ -264,7 +292,7 @@ class TestExceptionPropagation:
             raise RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
-            await collect_unordered([slow(1), slow(2), boom()])
+            await collect([slow(1), slow(2), boom()])
 
         assert sorted(cancelled) == [1, 2]
 
@@ -280,7 +308,7 @@ class TestExceptionPropagation:
             return Ok(v)
 
         with pytest.raises(RuntimeError):
-            await collect_unordered([boom(), never(1), never(2)], concurrency=1)
+            await collect([boom(), never(1), never(2)], concurrency=1)
 
         # with concurrency=1, never(1) and never(2) were never scheduled
         assert started == []
@@ -291,7 +319,7 @@ class TestExceptionPropagation:
             raise RuntimeError("exception")
 
         with pytest.raises(RuntimeError, match="exception"):
-            await collect_unordered([boom(), boom()], concurrency=None)
+            await collect([boom(), boom()], concurrency=None)
 
 
 # ---------------------------------------------------------------------------
@@ -302,12 +330,11 @@ class TestExceptionPropagation:
 class TestCreateTaskInputs:
     async def test_all_ok_with_tasks(self) -> None:
         tasks = [asyncio.create_task(ok_after(i)) for i in range(4)]
-        result = await collect_unordered(tasks)
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [0, 1, 2, 3]
+        result = await collect(tasks)
+        assert result == Ok([0, 1, 2, 3])
 
     async def test_err_cancels_out_of_window_tasks(self) -> None:
-        # tasks are already running before collect_unordered is called
+        # tasks are already running before collect is called
         cancelled = []
 
         async def slow(v: int) -> Ok[int]:
@@ -321,7 +348,7 @@ class TestCreateTaskInputs:
         tasks = [asyncio.create_task(slow(i)) for i in range(4)]
         await asyncio.sleep(0)  # let tasks start
 
-        result = await collect_unordered(
+        result = await collect(
             [err_after("stop"), *tasks],
             concurrency=2,
         )
@@ -334,36 +361,35 @@ class TestCreateTaskInputs:
 
     async def test_mixed_coros_and_tasks(self) -> None:
         task = asyncio.create_task(ok_after(1))
-        result = await collect_unordered([ok_after(0), task, ok_after(2)])
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [0, 1, 2]
+        result = await collect([ok_after(0), task, ok_after(2)])
+        assert result == Ok([0, 1, 2])
 
 
 # ---------------------------------------------------------------------------
-# partition_unordered
+# partition
 # ---------------------------------------------------------------------------
 
 
-class TestPartitionUnordered:
+class TestPartition:
     async def test_empty(self) -> None:
-        assert await partition_unordered([]) == ([], [])
+        assert await partition([]) == ([], [])
 
     async def test_all_ok(self) -> None:
-        oks, errs = await partition_unordered([ok_after(i) for i in range(3)])
-        assert sorted(oks) == [0, 1, 2]
+        oks, errs = await partition([ok_after(i) for i in range(3)])
+        assert oks == [0, 1, 2]
         assert errs == []
 
     async def test_all_err(self) -> None:
-        oks, errs = await partition_unordered([err_after(str(i)) for i in range(3)])
+        oks, errs = await partition([err_after(str(i)) for i in range(3)])
         assert oks == []
-        assert sorted(errs) == ["0", "1", "2"]
+        assert errs == ["0", "1", "2"]
 
     async def test_mixed(self) -> None:
-        oks, errs = await partition_unordered([
+        oks, errs = await partition([
             ok_after(1), err_after("a"), ok_after(2), err_after("b"),
         ])
-        assert sorted(oks) == [1, 2]
-        assert sorted(errs) == ["a", "b"]
+        assert oks == [1, 2]
+        assert errs == ["a", "b"]
 
     async def test_consumes_all_no_short_circuit(self) -> None:
         completed = []
@@ -373,7 +399,7 @@ class TestPartitionUnordered:
             completed.append(v)
             return Ok(v)
 
-        await partition_unordered(
+        await partition(
             [err_after("e"), tracked(1), tracked(2), tracked(3)],
         )
         assert sorted(completed) == [1, 2, 3]
@@ -386,11 +412,11 @@ class TestPartitionUnordered:
             await asyncio.sleep(0.05)
             return Ok(v)
 
-        oks, errs = await partition_unordered(
+        oks, errs = await partition(
             [tracked(i) for i in range(5)],
             concurrency=None,
         )
-        assert sorted(oks) == list(range(5))
+        assert oks == list(range(5))
         assert errs == []
         assert max(started_at) - min(started_at) < 0.02
 
@@ -402,7 +428,7 @@ class TestPartitionUnordered:
             await asyncio.sleep(0)
             return Ok(v)
 
-        await partition_unordered(
+        await partition(
             [tracked(i) for i in range(4)],
             concurrency=1,
         )
@@ -419,7 +445,7 @@ class TestPartitionUnordered:
             in_flight.remove(v)
             return Ok(v)
 
-        await partition_unordered(
+        await partition(
             [tracked(i) for i in range(8)],
             concurrency=3,
         )
@@ -427,8 +453,8 @@ class TestPartitionUnordered:
 
     async def test_with_tasks(self) -> None:
         tasks = [asyncio.create_task(ok_after(i)) for i in range(3)]
-        oks, errs = await partition_unordered(tasks)
-        assert sorted(oks) == [0, 1, 2]
+        oks, errs = await partition(tasks)
+        assert oks == [0, 1, 2]
         assert errs == []
 
     async def test_exception_propagates(self) -> None:
@@ -436,7 +462,7 @@ class TestPartitionUnordered:
             raise RuntimeError("oops")
 
         with pytest.raises(RuntimeError, match="oops"):
-            await partition_unordered([boom(), ok_after(1)])
+            await partition([boom(), ok_after(1)])
 
     async def test_exception_cancels_pending(self) -> None:
         cancelled: list[int] = []
@@ -453,7 +479,7 @@ class TestPartitionUnordered:
             raise RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
-            await partition_unordered([slow(1), slow(2), boom()])
+            await partition([slow(1), slow(2), boom()])
 
         assert sorted(cancelled) == [1, 2]
 
@@ -464,7 +490,7 @@ class TestPartitionUnordered:
             raise RuntimeError("boom")
 
         with pytest.raises(RuntimeError):
-            await partition_unordered([boom(), boom()], concurrency=None)
+            await partition([boom(), boom()], concurrency=None)
 
     async def test_exception_closes_unconsumed_coros(self) -> None:
         started: list[int] = []
@@ -478,31 +504,30 @@ class TestPartitionUnordered:
             return Ok(v)
 
         with pytest.raises(RuntimeError):
-            await partition_unordered([boom(), never(1), never(2)], concurrency=1)
+            await partition([boom(), never(1), never(2)], concurrency=1)
 
         assert started == []
 
 
 # ---------------------------------------------------------------------------
-# map_collect_unordered
+# map_collect
 # ---------------------------------------------------------------------------
 
 
-class TestMapCollectUnordered:
+class TestMapCollect:
     async def test_all_ok(self) -> None:
         async def double(x: int) -> Ok[int]:
             await asyncio.sleep(0)
             return Ok(x * 2)
 
-        result = await map_collect_unordered(range(4), double)
-        assert isinstance(result, Ok)
-        assert sorted(result.ok_value) == [0, 2, 4, 6]
+        result = await map_collect(range(4), double)
+        assert result == Ok([0, 2, 4, 6])
 
     async def test_empty(self) -> None:
         async def double(x: int) -> Ok[int]:
             return Ok(x * 2)
 
-        assert await map_collect_unordered([], double) == Ok([])
+        assert await map_collect([], double) == Ok([])
 
     async def test_first_err_short_circuits(self) -> None:
         called: list[int] = []
@@ -514,7 +539,7 @@ class TestMapCollectUnordered:
                 return Err("zero")
             return Ok(x)
 
-        result = await map_collect_unordered(range(4), maybe_fail, concurrency=1)
+        result = await map_collect(range(4), maybe_fail, concurrency=1)
         assert result == Err("zero")
         assert called == [0]
 
@@ -529,7 +554,7 @@ class TestMapCollectUnordered:
             in_flight.remove(x)
             return Ok(x)
 
-        await map_collect_unordered(range(8), tracked, concurrency=3)
+        await map_collect(range(8), tracked, concurrency=3)
         assert max(peak) <= 3
 
     async def test_exception_propagates(self) -> None:
@@ -537,7 +562,15 @@ class TestMapCollectUnordered:
             raise RuntimeError("oops")
 
         with pytest.raises(RuntimeError, match="oops"):
-            await map_collect_unordered([1, 2, 3], boom)
+            await map_collect([1, 2, 3], boom)
+
+    async def test_order_preserved(self) -> None:
+        async def fetch(x: int) -> Ok[int]:
+            await asyncio.sleep((10 - x) * 0.01)
+            return Ok(x * 10)
+
+        result = await map_collect(range(5), fetch)
+        assert result == Ok([0, 10, 20, 30, 40])
 
 
 # ---------------------------------------------------------------------------

@@ -30,9 +30,9 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
   - [`filter_err`](#filter_err)
   - [`try_reduce`](#try_reduce)
 - [Async iterator utilities](#async-iterator-utilities)
-  - [`collect_unordered`](#collect_unordered)
-  - [`map_collect_unordered`](#map_collect_unordered)
-  - [`partition_unordered`](#partition_unordered)
+  - [`collect`](#collect)
+  - [`map_collect`](#map_collect)
+  - [`partition`](#partition)
   - [`filter_ok_unordered`](#filter_ok_unordered)
   - [`filter_err_unordered`](#filter_err_unordered)
 - [License](#license)
@@ -1084,9 +1084,9 @@ not input order:
 
 ```python
 from corrode.async_iterator import (
-    collect_unordered,
-    map_collect_unordered,
-    partition_unordered,
+    collect,
+    map_collect,
+    partition,
     filter_ok_unordered,
     filter_err_unordered,
 )
@@ -1095,16 +1095,16 @@ from corrode.async_iterator import (
 All functions accept an optional `concurrency` parameter to limit how many
 tasks run at the same time. `None` (default) means unlimited.
 
-### `collect_unordered`
+### `collect`
 
 Await an iterable of coroutines or tasks concurrently, collecting results
-into `Ok[list]`. Returns the first `Err` encountered, cancelling remaining tasks:
+into `Ok[list]` in input order. Returns the first `Err` encountered, cancelling remaining tasks:
 
 ```python
 import asyncio
 from dataclasses import dataclass
 from corrode import Ok, Err, Result
-from corrode.async_iterator import collect_unordered
+from corrode.async_iterator import collect
 
 
 @dataclass
@@ -1124,19 +1124,19 @@ async def fetch_user(user_id: int) -> Result[User, NotFound]:
 
 
 async def main() -> None:
-    # Run all fetches concurrently (results come in completion order)
-    result = await collect_unordered([fetch_user(1), fetch_user(2), fetch_user(3)])
-    assert result.map(len) == Ok(3)
+    # Results are in input order regardless of completion order
+    result = await collect([fetch_user(1), fetch_user(2), fetch_user(3)])
+    assert result == Ok([User(id=1), User(id=2), User(id=3)])
 
-    # With concurrency limit
-    result = await collect_unordered([fetch_user(i) for i in range(1, 11)], concurrency=3)
-    assert result.map(len) == Ok(10)
+    # With concurrency limit — order still matches input
+    result = await collect([fetch_user(i) for i in range(1, 6)], concurrency=3)
+    assert result == Ok([User(id=1), User(id=2), User(id=3), User(id=4), User(id=5)])
 
 
 asyncio.run(main())
 ```
 
-### `map_collect_unordered`
+### `map_collect`
 
 Apply an async function to each element concurrently and collect into `Ok[list]`.
 Returns the first `Err` produced, cancelling remaining tasks:
@@ -1145,7 +1145,7 @@ Returns the first `Err` produced, cancelling remaining tasks:
 import asyncio
 from dataclasses import dataclass
 from corrode import Ok, Err, Result
-from corrode.async_iterator import map_collect_unordered
+from corrode.async_iterator import map_collect
 
 
 @dataclass
@@ -1167,29 +1167,29 @@ async def fetch_user(user_id: int) -> Result[User, NotFound]:
 async def main() -> None:
     user_ids = [1, 2, 3, 4, 5]
 
-    # Run all fetches concurrently
-    result = await map_collect_unordered(user_ids, fetch_user)
-    assert result.map(len) == Ok(5)
+    # Results are in input order regardless of completion order
+    result = await map_collect(user_ids, fetch_user)
+    assert result == Ok([User(id=1), User(id=2), User(id=3), User(id=4), User(id=5)])
 
-    # Limit concurrency
-    result = await map_collect_unordered(user_ids, fetch_user, concurrency=2)
-    assert result.map(len) == Ok(5)
+    # Limit concurrency — order still matches input
+    result = await map_collect(user_ids, fetch_user, concurrency=2)
+    assert result == Ok([User(id=1), User(id=2), User(id=3), User(id=4), User(id=5)])
 
 
 asyncio.run(main())
 ```
 
-### `partition_unordered`
+### `partition`
 
 Await an iterable of coroutines or tasks concurrently, splitting results into
-`(oks, errs)`. Unlike `collect_unordered`, never short-circuits — all
+`(oks, errs)` in input order. Unlike `collect`, never short-circuits — all
 awaitables run to completion:
 
 ```python
 import asyncio
 from dataclasses import dataclass
 from corrode import Ok, Err, Result
-from corrode.async_iterator import partition_unordered
+from corrode.async_iterator import partition
 
 
 @dataclass
@@ -1209,22 +1209,24 @@ async def fetch_user(user_id: int) -> Result[User, NotFound]:
 
 
 async def main() -> None:
-    oks, errs = await partition_unordered([
+    # oks and errs preserve relative input order
+    oks, errs = await partition([
         fetch_user(1),
-        fetch_user(2),
         fetch_user(-1),  # will fail
+        fetch_user(2),
+        fetch_user(-2),  # will fail
+        fetch_user(3),
     ])
-    assert len(oks) == 2
-    assert len(errs) == 1
-    assert errs[0] == NotFound(user_id=-1)
+    assert oks == [User(id=1), User(id=2), User(id=3)]
+    assert errs == [NotFound(user_id=-1), NotFound(user_id=-2)]
 
-    # With concurrency limit
-    oks, errs = await partition_unordered(
+    # With concurrency limit — order still matches input
+    oks, errs = await partition(
         [fetch_user(i) for i in range(-2, 5)],
         concurrency=3,
     )
-    assert len(oks) == 4  # 1, 2, 3, 4
-    assert len(errs) == 3  # -2, -1, 0
+    assert oks == [User(id=1), User(id=2), User(id=3), User(id=4)]
+    assert errs == [NotFound(user_id=-2), NotFound(user_id=-1), NotFound(user_id=0)]
 
 
 asyncio.run(main())

@@ -14,12 +14,13 @@ U = TypeVar("U")
 E = TypeVar("E")
 
 _R = TypeVar("_R")
+_S = TypeVar("_S")
 _CoroOrTask = Coroutine[object, object, _R] | asyncio.Task[_R]
 
 
 async def _cancel_all(
     pending: set[asyncio.Task[_R]],
-    it: Iterator[_CoroOrTask[_R]],
+    it: Iterator[_CoroOrTask[_S]],
 ) -> None:
     for t in pending:
         t.cancel()
@@ -31,17 +32,26 @@ async def _cancel_all(
             item.close()
 
 
-def _make_pending(
+def _wrap_indexed(idx: int, item: _CoroOrTask[_R]) -> asyncio.Task[tuple[int, _R]]:
+    async def _inner() -> tuple[int, _R]:
+        return idx, await item
+
+    return asyncio.ensure_future(_inner())
+
+
+def _make_pending_indexed(
     it: Iterator[_CoroOrTask[_R]],
     concurrency: int | None,
-) -> set[asyncio.Task[_R]]:
-    return {
-        asyncio.ensure_future(item)
-        for item in (it if concurrency is None else itertools.islice(it, concurrency))
-    }
+) -> tuple[set[asyncio.Task[tuple[int, _R]]], int]:
+    pending: set[asyncio.Task[tuple[int, _R]]] = set()
+    idx = 0
+    for item in (it if concurrency is None else itertools.islice(it, concurrency)):
+        pending.add(_wrap_indexed(idx, item))
+        idx += 1
+    return pending, idx
 
 
-async def collect_unordered(
+async def collect(
     iterable: Iterable[_CoroOrTask[Result[T, E]]],
     *,
     concurrency: int | None = None,
@@ -49,7 +59,7 @@ async def collect_unordered(
     """
     Await an iterable of coroutines or tasks concurrently, collecting results into ``Ok[list]``.
 
-    Results are returned in completion order, not input order.
+    Results are returned in input order.
     Returns the first ``Err`` encountered, cancelling remaining tasks.
 
     *concurrency* limits how many run at the same time.
@@ -61,18 +71,18 @@ async def collect_unordered(
 
     Example::
 
-        collect_unordered([fetch(1), fetch(2), fetch(3)])
-        collect_unordered([fetch(1), fetch(2)], concurrency=4)
+        collect([fetch(1), fetch(2), fetch(3)])
+        collect([fetch(1), fetch(2)], concurrency=4)
     """
     it = iter(iterable)
-    pending = _make_pending(it, concurrency)
-    results: list[T] = []
+    pending, next_idx = _make_pending_indexed(it, concurrency)
+    indexed: dict[int, T] = {}
 
     while pending:
         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             try:
-                result = task.result()
+                idx, result = task.result()
             except BaseException:
                 for other in done:
                     if other is not task:
@@ -81,18 +91,19 @@ async def collect_unordered(
                 raise
             match result:
                 case Ok(value):
-                    results.append(value)
+                    indexed[idx] = value
                     next_item = next(it, None)
                     if next_item is not None:
-                        pending.add(asyncio.ensure_future(next_item))
+                        pending.add(_wrap_indexed(next_idx, next_item))
+                        next_idx += 1
                 case Err() as err:
                     await _cancel_all(pending, it)
                     return err
 
-    return Ok(results)
+    return Ok([indexed[i] for i in range(len(indexed))])
 
 
-async def map_collect_unordered(
+async def map_collect(
     iterable: Iterable[T],
     f: Callable[[T], _CoroOrTask[Result[U, E]]],
     *,
@@ -101,7 +112,7 @@ async def map_collect_unordered(
     """
     Apply *f* to each element concurrently and collect into ``Ok[list]``.
 
-    Results are returned in completion order, not input order.
+    Results are returned in input order.
     Returns the first ``Err`` produced by *f*, cancelling remaining tasks.
 
     *concurrency* limits how many calls to *f* run at the same time.
@@ -113,16 +124,16 @@ async def map_collect_unordered(
 
     Example::
 
-        map_collect_unordered(user_ids, fetch_user)
-        map_collect_unordered(urls, fetch, concurrency=10)
+        map_collect(user_ids, fetch_user)
+        map_collect(urls, fetch, concurrency=10)
     """
-    return await collect_unordered(
+    return await collect(
         (f(element) for element in iterable),
         concurrency=concurrency,
     )
 
 
-async def partition_unordered(
+async def partition(
     iterable: Iterable[_CoroOrTask[Result[T, E]]],
     *,
     concurrency: int | None = None,
@@ -130,8 +141,8 @@ async def partition_unordered(
     """
     Await an iterable of coroutines or tasks concurrently, splitting results into ``(oks, errs)``.
 
-    Results are collected in completion order, not input order.
-    Unlike ``collect_unordered``, never short-circuits — all awaitables run to completion.
+    Results are collected in input order within each list.
+    Unlike ``collect``, never short-circuits — all awaitables run to completion.
 
     *concurrency* limits how many run at the same time.
     ``None`` means unlimited — all are scheduled at once.
@@ -142,34 +153,38 @@ async def partition_unordered(
 
     Example::
 
-        oks, errs = await partition_unordered([fetch(1), fetch(2), fetch(3)])
-        oks, errs = await partition_unordered([fetch(1), fetch(2)], concurrency=4)
+        oks, errs = await partition([fetch(1), fetch(2), fetch(3)])
+        oks, errs = await partition([fetch(1), fetch(2)], concurrency=4)
     """
     it = iter(iterable)
-    pending = _make_pending(it, concurrency)
-    oks: list[T] = []
-    errs: list[E] = []
+    pending, next_idx = _make_pending_indexed(it, concurrency)
+    indexed: dict[int, Result[T, E]] = {}
 
     while pending:
         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
         for task in done:
             try:
-                result = task.result()
+                idx, result = task.result()
             except BaseException:
                 for other in done:
                     if other is not task:
                         other.exception()  # mark as retrieved to avoid warnings
                 await _cancel_all(pending, it)
                 raise
-            match result:
-                case Ok(value):
-                    oks.append(value)
-                case Err(e):
-                    errs.append(e)
+            indexed[idx] = result
             next_item = next(it, None)
             if next_item is not None:
-                pending.add(asyncio.ensure_future(next_item))
+                pending.add(_wrap_indexed(next_idx, next_item))
+                next_idx += 1
 
+    oks: list[T] = []
+    errs: list[E] = []
+    for result in (indexed[i] for i in range(len(indexed))):
+        match result:
+            case Ok(value):
+                oks.append(value)
+            case Err(e):
+                errs.append(e)
     return oks, errs
 
 
@@ -197,7 +212,10 @@ async def filter_ok_unordered(
             print(user)
     """
     it = iter(iterable)
-    pending = _make_pending(it, concurrency)
+    pending: set[asyncio.Task[Result[T, E]]] = {
+        asyncio.ensure_future(item)
+        for item in (it if concurrency is None else itertools.islice(it, concurrency))
+    }
 
     while pending:
         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
@@ -244,7 +262,10 @@ async def filter_err_unordered(
             print(err)
     """
     it = iter(iterable)
-    pending = _make_pending(it, concurrency)
+    pending: set[asyncio.Task[Result[T, E]]] = {
+        asyncio.ensure_future(item)
+        for item in (it if concurrency is None else itertools.islice(it, concurrency))
+    }
 
     while pending:
         done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
