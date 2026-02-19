@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2](https://github.com/deliro/corrode/compare/v0.1.1...v0.1.2) (2026-02-19)
+
+
+### Bug Fixes
+
+* **types:** narrow as_async_result return type from Awaitable to ([ea5d40c](https://github.com/deliro/corrode/commit/ea5d40c28b589ba292aad5eef1ad166888d1a622))
+
 ## [0.1.1](https://github.com/deliro/corrode/compare/v0.1.0...v0.1.1) (2026-02-19)
 
 
