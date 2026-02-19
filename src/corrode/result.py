@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import sys
-from collections.abc import AsyncGenerator, Awaitable, Callable, Generator, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator, Iterator
 from typing import (
     Any,
     Generic,
@@ -387,6 +387,11 @@ def _err_do_iter(err: Err[Any]) -> Iterator[NoReturn]:
     but it is never reached because ``_DoError`` is always raised first.
     """
     raise _DoError(err)
+    # SAFETY: This `yield` is unreachable at runtime — `_DoError` is always raised
+    # above. It exists solely to make Python treat this function as a generator
+    # (required by the `do()` / `do_async()` machinery which expects a generator
+    # protocol). Without it, the function would be a plain callable and the `yield
+    # from early_return(err)` expression in user code would raise `TypeError`.
     yield  # type: ignore[unreachable]
 
 
@@ -773,7 +778,7 @@ def as_result(
 
 def as_async_result(
     *exceptions: type[TBE],
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[Result[R, TBE]]]]:
+) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TBE]]]]:
     """
     Make a decorator to turn an async function into one that returns a ``Result``.
 
@@ -789,7 +794,7 @@ def as_async_result(
 
     def decorator(
         f: Callable[P, Awaitable[R]],
-    ) -> Callable[P, Awaitable[Result[R, TBE]]]:
+    ) -> Callable[P, Coroutine[object, object, Result[R, TBE]]]:
         @functools.wraps(f)
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TBE]:
             try:
@@ -797,7 +802,15 @@ def as_async_result(
             except exceptions as exc:
                 return Err(exc)
 
-        return async_wrapper
+        # SAFETY: `async_wrapper` is declared as `async def`, so at runtime it
+        # returns a `Coroutine[object, object, Result[R, TBE]]`, which satisfies
+        # `Callable[P, Coroutine[...]]`. However, pyright cannot prove this
+        # assignment because `ParamSpec` substitution through a `Callable` with
+        # `*args: P.args, **kwargs: P.kwargs` does not propagate into the
+        # inferred return type of an inner `async def`. The ignore is therefore
+        # a checker limitation, not a soundness issue. mypy handles this correctly
+        # and needs no suppression.
+        return async_wrapper  # pyright: ignore[reportReturnType]
 
     return decorator
 
