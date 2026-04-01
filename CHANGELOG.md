@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3](https://github.com/deliro/corrode/compare/v0.1.2...v0.1.3) (2026-04-01)
+
+
+### Documentation
+
+* add acknowledgements ([68bf8b0](https://github.com/deliro/corrode/commit/68bf8b0d5d408acbd32d4a05cfcdb77a69c7db4f))
+* add The Zen of Python quote ([6f3bb5e](https://github.com/deliro/corrode/commit/6f3bb5ebc457b64f96e2b06229bf6c770057b2d6))
+* README improved & `do` deprecated ([baef922](https://github.com/deliro/corrode/commit/baef9223318ef9b90f00265898fb5424a92251ac))
+
 ## [0.1.2](https://github.com/deliro/corrode/compare/v0.1.1...v0.1.2) (2026-02-19)
 
 
