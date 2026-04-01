@@ -849,6 +849,21 @@ def do(gen: Generator[Result[T_co, E_co], None, None]) -> Result[T_co, E_co]:
     """
     Do notation for Result (syntactic sugar for sequence of ``and_then()`` calls).
 
+    .. deprecated::
+        **Not recommended.** Python's type system cannot infer the error type
+        through generator expressions. The error types from ``for x in result``
+        clauses are consumed by ``__iter__`` and never appear in the generator's
+        type signature, so type checkers infer ``Result[T, Never]`` instead of
+        the correct union of error types.
+
+        You must always provide an explicit type annotation on the result,
+        and that annotation is **not verified** by the type checker — writing
+        a wrong error type silently passes. This defeats the type safety
+        that ``Result`` exists for.
+
+        Prefer ``match``, ``and_then()`` chains, or ``zip()`` — all of which
+        are fully typed without annotations.
+
     Usage::
 
         final_result: Result[float, int] = do(
@@ -880,6 +895,12 @@ async def do_async(
 ) -> Result[T_co, E_co]:
     """
     Async version of ``do()``.
+
+    .. deprecated::
+        **Not recommended.** Same limitations as ``do()`` — error types are
+        not inferred and the required annotation is not checked by type
+        checkers. Prefer ``match``, ``and_then_async()`` chains, or
+        ``zip()`` instead.
 
     Usage::
 

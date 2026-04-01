@@ -18,7 +18,6 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
 
 - [Installation](#installation)
 - [Why](#why)
-- [Quick start](#quick-start)
 - [Exhaustive error handling](#exhaustive-error-handling)
 - [Adopting corrode in an existing codebase](#adopting-corrode-in-an-existing-codebase)
 - [API reference](#api-reference)
@@ -29,7 +28,7 @@ A Rust-like `Result` type for Python 3.11+, fully type annotated.
   - [Predicates](#predicates)
   - [Inspecting](#inspecting)
   - [Async methods](#async-methods)
-  - [`do` notation](#do-notation)
+  - [`do` notation (not recommended)](#do-notation-not-recommended)
   - [`@as_result` / `@as_async_result`](#as_result--as_async_result)
   - [Escape hatches](#escape-hatches)
 - [Iterator utilities](#iterator-utilities)
@@ -90,7 +89,7 @@ user = get_user(1)
 assert user.name == "Alice"
 ```
 
-`Result` makes errors explicit, typed, and impossible to ignore:
+`Result[T, E]` is a union of `Ok[T] | Err[E]`:
 
 ```python
 from dataclasses import dataclass
@@ -109,68 +108,23 @@ class NotFound:
 class Forbidden:
     reason: str
 
-# Now every caller sees the possible errors in the signature
-def get_user(user_id: int) -> Result[User, NotFound | Forbidden]:
+type GetUserError = NotFound | Forbidden
+
+# Errors are now part of the return type — callers see exactly what can go wrong
+def get_user(user_id: int) -> Result[User, GetUserError]:
+    # Instead of raise, return Err — the type checker tracks it
     if user_id <= 0:
         return Err(NotFound(user_id=user_id))
     if user_id == 13:
         return Err(Forbidden(reason="banned"))
     return Ok(User(id=user_id, name="Alice"))
 
-# Caller must handle the Result — can't accidentally ignore errors
+# Can't ignore errors — Result forces you to handle both variants
 assert get_user(1) == Ok(User(id=1, name="Alice"))
 assert get_user(-1) == Err(NotFound(user_id=-1))
 ```
 
-Now every caller sees the possible errors in the signature, the type checker
-verifies every branch is handled, and adding a new error variant is
-a compile-time breaking change — not a runtime surprise.
-
-## Quick start
-
-`Result[T, E]` is a union of `Ok[T] | Err[E]`. Every `Result` must be explicitly
-handled — no silent `None`s, no uncaught exceptions.
-
-```python
-from dataclasses import dataclass
-from corrode import Ok, Err, Result
-
-
-@dataclass
-class User:
-    id: int
-    name: str
-    email: str
-
-
-@dataclass
-class NotFound:
-    user_id: int
-
-@dataclass
-class Forbidden:
-    reason: str
-
-type GetUserError = NotFound | Forbidden
-
-
-def get_user(user_id: int) -> Result[User, GetUserError]:
-    if user_id <= 0:
-        return Err(NotFound(user_id=user_id))
-    if user_id == 13:
-        return Err(Forbidden(reason="banned"))
-    return Ok(User(id=user_id, name="Alice", email="alice@example.com"))
-
-
-# Test it works
-assert get_user(1) == Ok(User(id=1, name="Alice", email="alice@example.com"))
-assert get_user(-1) == Err(NotFound(user_id=-1))
-```
-
 ## Exhaustive error handling
-
-Use a nested `match` on the error value together with `assert_never` to get
-a compile-time guarantee that every error variant is handled:
 
 ```python
 from dataclasses import dataclass
@@ -206,72 +160,17 @@ match get_user(42):
     case Ok(user):
         print(f"Welcome, {user.name}")
     case Err(e):
+        # Nested match on the error — each variant handled explicitly
         match e:
             case NotFound(user_id=uid):
                 print(f"User {uid} does not exist")
             case Forbidden(reason=reason):
                 print(f"Access denied: {reason}")
             case _:
+                # If you add a new variant to GetUserError, mypy reports
+                # an error here until you handle it — compile-time safety
                 assert_never(e)
 ```
-
-Now add a new error variant — `mypy` immediately reports that the new case
-is not handled, forcing you to update the code before it compiles:
-
-```python
-from dataclasses import dataclass
-from typing import assert_never
-from corrode import Ok, Err, Result
-
-
-@dataclass
-class User:
-    id: int
-    name: str
-
-@dataclass
-class NotFound:
-    user_id: int
-
-@dataclass
-class Forbidden:
-    reason: str
-
-@dataclass
-class RateLimited:
-    retry_after: float
-
-type GetUserError = NotFound | Forbidden | RateLimited
-
-
-def get_user(user_id: int) -> Result[User, GetUserError]:
-    if user_id <= 0:
-        return Err(NotFound(user_id=user_id))
-    if user_id == 13:
-        return Err(Forbidden(reason="banned"))
-    if user_id == 100:
-        return Err(RateLimited(retry_after=60.0))
-    return Ok(User(id=user_id, name="Alice"))
-
-
-# Now we must handle all three error variants
-match get_user(100):
-    case Ok(user):
-        print(f"Welcome, {user.name}")
-    case Err(e):
-        match e:
-            case NotFound(user_id=uid):
-                print(f"User {uid} does not exist")
-            case Forbidden(reason=reason):
-                print(f"Access denied: {reason}")
-            case RateLimited(retry_after=seconds):
-                print(f"Rate limited, retry after {seconds}s")
-            case _:
-                assert_never(e)
-```
-
-You are forced to handle the new case before the code passes type checking.
-No error silently slips through.
 
 ## Adopting corrode in an existing codebase
 
@@ -281,8 +180,6 @@ overnight, and third-party libraries will always raise them. That's fine —
 
 ### Step 1: wrap existing functions with `@as_result`
 
-You have code that raises. Don't rewrite it yet — just wrap it:
-
 ```python
 import os
 from corrode import as_result, Ok, Err
@@ -291,26 +188,7 @@ from corrode import as_result, Ok, Err
 def parse_port_unsafe(key: str) -> int:
     return int(os.environ[key])
 
-# After: signature tells you exactly what can go wrong
-@as_result(KeyError, ValueError)
-def parse_port(key: str) -> int:
-    return int(os.environ[key])
-
-
-# Test that it works
-os.environ["TEST_PORT"] = "8080"
-assert parse_port("TEST_PORT") == Ok(8080)
-assert isinstance(parse_port("MISSING_KEY").err(), KeyError)
-```
-
-The function body stays the same. The only change is the decorator, and
-the callers now get a `Result` instead of praying nothing blows up:
-
-```python
-import os
-from corrode import as_result, Ok, Err
-
-
+# After: just add the decorator — body unchanged, callers get Result
 @as_result(KeyError, ValueError)
 def parse_port(key: str) -> int:
     return int(os.environ[key])
@@ -333,15 +211,14 @@ match parse_port("PORT"):
 
 ### Step 2: return `Err(exception)` explicitly
 
-Once callers are adapted, you can drop the decorator and return errors
-explicitly. The function still uses exception classes, so the callers
-don't change:
-
 ```python
 import os
 from corrode import Ok, Err, Result
 
 
+# @as_result removed — errors returned explicitly now.
+# Return type visible in the signature, not hidden in the decorator.
+# Callers don't change — they still match on the same exception types.
 def parse_port(key: str) -> Result[int, KeyError | ValueError]:
     raw = os.environ.get(key)
     if raw is None:
@@ -359,15 +236,15 @@ assert isinstance(parse_port("MISSING").err(), KeyError)
 
 ### Step 3: replace exceptions with domain types
 
-When you're ready, replace exception classes with dataclasses that carry
-exactly the data the caller needs:
-
 ```python
 import os
 from dataclasses import dataclass
 from corrode import Ok, Err, Result
 
 
+# Exception classes replaced with dataclasses —
+# each error carries exactly the data the caller needs,
+# no more parsing exception messages to figure out what went wrong.
 @dataclass
 class MissingKey:
     key: str
@@ -395,54 +272,45 @@ assert parse_port("PORT") == Ok(8080)
 assert parse_port("MISSING") == Err(MissingKey(key="MISSING"))
 ```
 
-Each step is a small, safe refactoring. Your callers get progressively
-better types, and `mypy` catches every unhandled case.
-
 ### Exceptions inside Result-returning code
 
-Third-party libraries raise exceptions — that's fine. A `try/except`
-inside a function that returns `Result` is completely normal:
-
 ```python
+import json
 from dataclasses import dataclass
 from corrode import Ok, Err, Result
 
 
 @dataclass
-class NotFound:
-    url: str
+class InvalidJson:
+    raw: str
 
 @dataclass
-class Unavailable:
-    url: str
-    status: int
+class MissingField:
+    field: str
 
 
-def fetch_data(url: str) -> Result[bytes, NotFound | Unavailable]:
-    # Example without actual HTTP call
-    if "notfound" in url:
-        return Err(NotFound(url=url))
-    if "error" in url:
-        return Err(Unavailable(url=url, status=500))
-    return Ok(b"data")
+def parse_config(raw: str) -> Result[dict[str, int], InvalidJson | MissingField]:
+    # try/except and Result mix freely in the same function —
+    # just catch what you caught before and wrap it in Err
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return Err(InvalidJson(raw=raw))
+
+    # From here on, plain Result logic
+    if "port" not in data:
+        return Err(MissingField(field="port"))
+    return Ok(data)
 
 
-assert fetch_data("https://example.com") == Ok(b"data")
-assert fetch_data("https://notfound.com") == Err(NotFound(url="https://notfound.com"))
+assert parse_config('{"port": 8080}') == Ok({"port": 8080})
+assert parse_config("not json") == Err(InvalidJson(raw="not json"))
+assert parse_config("{}") == Err(MissingField(field="port"))
 ```
-
-You catch the exception, convert it to a typed `Err` with exactly the
-data the caller needs, and the rest of your code stays in `Result`-land.
-No need to wrap every library call — just handle exceptions where they
-happen and return a meaningful error.
 
 ## API reference
 
 ### Pattern matching
-
-The preferred way to handle results. `Ok` and `Err` support structural
-pattern matching, and combined with `assert_never` you get compile-time
-guarantees that every case is handled:
 
 ```python
 from dataclasses import dataclass
@@ -484,6 +352,7 @@ def charge(user: User, amount: int) -> Result[User, InsufficientFunds]:
 
 
 def process_payment(user_id: int, amount: int) -> Result[User, PaymentError]:
+    # Pattern matching to chain fallible operations
     match get_user(user_id):
         case Err(e):
             return Err(e)
@@ -491,7 +360,6 @@ def process_payment(user_id: int, amount: int) -> Result[User, PaymentError]:
             return charge(user, amount)
 
 
-# Handle all cases exhaustively with nested match
 match process_payment(42, 50):
     case Ok(user):
         print(f"{user.name} charged, new balance: {user.balance}")
@@ -506,9 +374,6 @@ match process_payment(42, 50):
 ```
 
 ### Transforming values
-
-Transform the success value with `map`, or the error with `map_err`.
-The other variant passes through unchanged:
 
 ```python
 from dataclasses import dataclass
@@ -541,11 +406,11 @@ def format_error(err: ApiError) -> str:
     return f"Error {err.code}: {err.message}"
 
 
-# Extract just the name from successful result
+# map transforms Ok, passes Err through unchanged
 assert get_user(42).map(get_name) == Ok("Alice")
 assert get_user(0).map(get_name) == Err(ApiError(code=404, message="User not found"))
 
-# Transform error into a user-friendly message
+# map_err transforms Err, passes Ok through unchanged
 assert get_user(0).map_err(format_error) == Err("Error 404: User not found")
 assert get_user(42).map_err(format_error) == Ok(User(id=42, name="Alice"))
 
@@ -564,9 +429,6 @@ assert get_user(0).map_or_else(error_placeholder, get_name) == "User #404"
 Async variants: `map_async`, `map_err_async`, `map_or_async`, `map_or_else_async`.
 
 ### Chaining with `and_then` / `or_else`
-
-Chain fallible operations. `and_then` short-circuits on error,
-`or_else` provides recovery:
 
 ```python
 from dataclasses import dataclass
@@ -599,19 +461,23 @@ def parse_name(name: str) -> Result[str, ValidationError]:
 
 
 def create_user(user_id: int, name: str, email: str) -> Result[User, ValidationError]:
-    return (
-        parse_name(name)
-        .and_then(lambda n: parse_email(email).map(lambda e: (n, e)))
-        .map(lambda pair: User(id=user_id, name=pair[0], email=pair[1]))
-    )
+    # Sequential match — each step short-circuits on Err
+    match parse_name(name):
+        case Ok(n):
+            pass
+        case err:
+            return err
+    match parse_email(email):
+        case Ok(e):
+            return Ok(User(id=user_id, name=n, email=e))
+        case err:
+            return err
 
 
 assert create_user(1, "Alice", "alice@example.com") == Ok(User(id=1, name="Alice", email="alice@example.com"))
 assert create_user(1, "A", "alice@example.com") == Err(ValidationError(field="name", message="Name too short"))
 assert create_user(1, "Alice", "invalid") == Err(ValidationError(field="email", message="Invalid email format"))
 ```
-
-Use `or_else` for fallback strategies:
 
 ```python
 from corrode import Ok, Err, Result
@@ -631,7 +497,7 @@ def fetch_from_api(key: str) -> Result[str, str]:
     return Ok("fetched from API")
 
 
-# Try cache, then DB, then API
+# or_else provides recovery — try cache, then DB, then API
 result = (
     fetch_from_cache("user:1")
     .or_else(lambda _: fetch_from_db("user:1"))
@@ -821,7 +687,10 @@ Full list: `map_async`, `map_err_async`, `map_or_async`, `map_or_else_async`,
 `and_then_async`, `or_else_async`, `is_ok_and_async`, `is_err_and_async`,
 `inspect_async`, `inspect_err_async`.
 
-### `do` notation
+### `do` notation (not recommended)
+
+> **Not recommended.** Prefer `match`, `and_then()` chains, or `zip()` — all
+> of which are fully typed without annotations.
 
 Syntactic sugar for a sequence of `and_then()` calls. If any step is `Err`,
 the whole expression short-circuits:
@@ -838,11 +707,6 @@ class User:
 
 
 @dataclass
-class Subscription:
-    plan: str
-
-
-@dataclass
 class NotFound:
     pass
 
@@ -853,20 +717,26 @@ def get_user(user_id: int) -> Result[User, NotFound]:
     return Ok(User(id=user_id, name="Alice"))
 
 
-def get_subscription(user: User) -> Result[Subscription, NotFound]:
-    return Ok(Subscription(plan="Pro"))
-
-
+# ⚠ Explicit type annotation is required — Python's type system cannot infer
+# error types through generator expressions. Type checkers see
+# Result[str, Never] instead of Result[str, NotFound].
+#
+# Worse: the annotation is NOT checked. Writing Result[str, int] here
+# would silently pass — you lose the type safety that Result exists for.
 result: Result[str, NotFound] = do(
-    Ok(f"{user.name} has {sub.plan}")
+    Ok(f"Hello, {user.name}")
     for user in get_user(42)
-    for sub in get_subscription(user)
 )
 
-assert result == Ok("Alice has Pro")
+assert result == Ok("Hello, Alice")
+
+# Compare: map() infers the full type automatically — no annotation needed,
+# and the error type is checked by the type checker
+result2 = get_user(42).map(lambda user: f"Hello, {user.name}")
+assert result2 == Ok("Hello, Alice")
 ```
 
-For async code, use `do_async`:
+For async code, use `do_async` (same limitation):
 
 ```python
 import asyncio
@@ -875,36 +745,21 @@ from corrode import do_async, Ok, Err, Result
 
 
 @dataclass
-class User:
-    id: int
-    name: str
-
-
-@dataclass
-class Profile:
-    bio: str
-
-
-@dataclass
 class FetchError:
     pass
 
 
-async def fetch_user(user_id: int) -> Result[User, FetchError]:
-    return Ok(User(id=user_id, name="Alice"))
-
-
-async def fetch_profile(user_id: int) -> Result[Profile, FetchError]:
-    return Ok(Profile(bio="Hello!"))
+async def fetch_name(user_id: int) -> Result[str, FetchError]:
+    return Ok("Alice")
 
 
 async def main() -> None:
+    # ⚠ Same problem: annotation required, not checked, type safety lost
     result: Result[str, FetchError] = await do_async(
-        Ok(f"{user.name}: {profile.bio}")
-        for user in await fetch_user(42)
-        for profile in await fetch_profile(user.id)
+        Ok(f"Hello, {name}")
+        for name in await fetch_name(42)
     )
-    assert result == Ok("Alice: Hello!")
+    assert result == Ok("Hello, Alice")
 
 
 asyncio.run(main())
