@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import pickle
+import typing
 
 import pytest
 
@@ -712,6 +713,58 @@ class TestAsResult:
             def f() -> int:
                 return 1
 
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [
+            (ValueError, ValueError("v")),
+            (ValueError | KeyError, ValueError("v")),
+            (ValueError | KeyError, KeyError("k")),
+            (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
+            (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+        ],
+    )
+    def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_result(form)  # type: ignore[type-var]
+        def f() -> int:
+            raise raised
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.parametrize(
+        "form",
+        [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
+    )
+    def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_result(form)  # type: ignore[type-var]
+        def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            f()
+        assert str(exc_info.value) == "i"
+
+    def test_union_with_base_exception_only_class_rejected(self) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            as_result(ValueError | KeyboardInterrupt)  # type: ignore[type-var]
+        assert (
+            str(exc_info.value)
+            == "as_result() requires one or more exception types (subclasses of Exception)"
+        )
+
+    @pytest.mark.parametrize(
+        ("decorator", "name"),
+        [(as_result, "as_result"), (as_async_result, "as_async_result")],
+    )
+    def test_tuple_form_rejected(self, decorator: typing.Callable[..., object], name: str) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator((ValueError, KeyError))
+        assert (
+            str(exc_info.value)
+            == f"{name}() requires one or more exception types (subclasses of Exception)"
+        )
+
 
 class TestAsAsyncResult:
     @pytest.mark.asyncio
@@ -763,6 +816,47 @@ class TestAsAsyncResult:
 
         with pytest.raises(IndexError):
             await f()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [
+            (ValueError, ValueError("v")),
+            (ValueError | KeyError, ValueError("v")),
+            (ValueError | KeyError, KeyError("k")),
+            (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
+            (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+        ],
+    )
+    async def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_async_result(form)  # type: ignore[type-var]
+        async def f() -> int:
+            raise raised
+
+        result = await f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "form",
+        [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
+    )
+    async def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_async_result(form)  # type: ignore[type-var]
+        async def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            await f()
+        assert str(exc_info.value) == "i"
+
+    def test_union_with_cancelled_error_rejected(self) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            as_async_result(ValueError | asyncio.CancelledError)  # type: ignore[type-var]
+        assert str(exc_info.value) == (
+            "as_async_result() requires one or more exception types (subclasses of Exception)"
+        )
 
 
 # ---------------------------------------------------------------------------

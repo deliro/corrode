@@ -7,6 +7,7 @@ statically to ensure the corrode public API is correctly typed.
 from __future__ import annotations
 
 from collections.abc import Awaitable
+from typing import assert_type
 
 from corrode import (
     DoError,
@@ -175,6 +176,24 @@ async def fetch(url: str) -> bytes:  # noqa: ARG001
 
 
 _as_async_result: Awaitable[Result[bytes, OSError]] = fetch("http://example.com")
+
+
+@as_result(ValueError | KeyError)
+def parse_union(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_union("1"), Result[int, ValueError | KeyError])
+
+
+@as_async_result(ValueError | KeyError)
+async def fetch_union(s: str) -> int:
+    return int(s)
+
+
+async def _check_fetch_union() -> None:
+    assert_type(await fetch_union("1"), Result[int, ValueError | KeyError])
+
 
 # ---------------------------------------------------------------------------
 # 12. Async method types

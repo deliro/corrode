@@ -449,7 +449,7 @@ asyncio.run(main())
 
 `corrode` is designed for gradual adoption — no big-bang rewrite:
 
-1. **Wrap** existing functions with `@as_result(ExcType, ...)` — the body is
+1. **Wrap** existing functions with `@as_result(KeyError | ValueError)` — the body is
    unchanged, callers start receiving `Result` with the exception inside `Err`.
 2. **Return `Err(exc)` explicitly** — replace `raise` with `return Err(exc)`
    and drop the decorator; the error types move into the signature, callers
@@ -467,7 +467,7 @@ os.environ["PORT"] = "8080"
 
 # Step 1: wrap — the body is untouched, callers get Result.
 # Raised KeyError / ValueError become Err(exc); other exceptions propagate.
-@as_result(KeyError, ValueError)
+@as_result(KeyError | ValueError)
 def parse_port_wrapped(key: str) -> int:
     return int(os.environ[key])
 

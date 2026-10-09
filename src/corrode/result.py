@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import functools
-import inspect
 import sys
+import types
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator, Iterator
 from typing import (
@@ -16,7 +16,10 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
+    Union,
     cast,
+    get_args,
+    get_origin,
     overload,
 )
 
@@ -24,6 +27,11 @@ if sys.version_info >= (3, 13):
     from typing import TypeIs
 else:  # pragma: no cover
     from typing_extensions import TypeIs
+
+if sys.version_info >= (3, 15):  # pragma: no cover
+    from typing import TypeForm
+else:
+    from typing_extensions import TypeForm
 
 T_co = TypeVar("T_co", covariant=True)  # Success type
 E_co = TypeVar("E_co", covariant=True)  # Error type
@@ -1087,8 +1095,22 @@ class UnwrapError(Exception):
         return self._result
 
 
+_UNIONS = {types.UnionType, Union}
+
+
+def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type[TE], ...]:
+    """Flatten ``X | Y`` / ``Union[X, Y]`` forms into exception classes, or raise ``TypeError``."""
+    classes = tuple(
+        c for form in forms for c in (get_args(form) if get_origin(form) in _UNIONS else (form,))
+    )
+    if not classes or not all(isinstance(c, type) and issubclass(c, Exception) for c in classes):
+        msg = f"{name}() requires one or more exception types (subclasses of Exception)"
+        raise TypeError(msg)
+    return cast("tuple[type[TE], ...]", classes)
+
+
 def as_result(
-    *exceptions: type[TE],
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]:
     """
     Make a decorator to turn a function into one that returns a ``Result``.
@@ -1109,19 +1131,25 @@ def as_result(
         >>> parse("x").map_err(type)
         Err(<class 'ValueError'>)
 
+    Several exception types are listed as a union:
+
+        >>> @as_result(ValueError | KeyError)
+        ... def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> lookup({"a": "1"}, "a")
+        Ok(1)
+        >>> lookup({}, "a").map_err(type)
+        Err(<class 'KeyError'>)
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    classes = _exception_classes("as_result", exceptions)
 
     def decorator(f: Callable[P, R]) -> Callable[P, Result[R, TE]]:
         @functools.wraps(f)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         return wrapper
@@ -1130,7 +1158,7 @@ def as_result(
 
 
 def as_async_result(
-    *exceptions: type[TE],
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]]:
     """
     Make a decorator to turn an async function into one that returns a ``Result``.
@@ -1141,12 +1169,19 @@ def as_async_result(
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
+
+    Examples:
+        >>> import asyncio
+        >>> @as_async_result(ValueError | KeyError)
+        ... async def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> asyncio.run(lookup({"a": "1"}, "a"))
+        Ok(1)
+        >>> asyncio.run(lookup({}, "a")).map_err(type)
+        Err(<class 'KeyError'>)
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_async_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    classes = _exception_classes("as_async_result", exceptions)
 
     def decorator(
         f: Callable[P, Awaitable[R]],
@@ -1155,7 +1190,7 @@ def as_async_result(
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(await f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         # SAFETY: `async_wrapper` is declared as `async def`, so at runtime it
