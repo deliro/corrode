@@ -124,4 +124,9 @@
   main: |
     from corrode import as_result
 
-    as_result((ValueError, KeyError))  # E: Argument 1 to "as_result" has incompatible type "tuple[type[ValueError], type[KeyError]]"; expected "TypeForm[Never]"  [arg-type]
+    as_result((ValueError, KeyError))
+  out: |
+    main:3: error: No overload variant of "as_result" matches argument type "tuple[type[ValueError], type[KeyError]]"  [call-overload]
+    main:3: note: Possible overload variants:
+    main:3: note:     def [TE: Exception] as_result(TypeForm[TE], /) -> Callable[[Callable[P, R]], Callable[P, Ok[R] | Err[TE]]]
+    main:3: note:     def [TE: Exception] as_result(*exceptions: TypeForm[TE]) -> Callable[[Callable[P, R]], Callable[P, Ok[R] | Err[TE]]]

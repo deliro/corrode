@@ -27,8 +27,9 @@ from typing import (
 
 if sys.version_info >= (3, 13):
     from typing import TypeIs
+    from warnings import deprecated
 else:  # pragma: no cover
-    from typing_extensions import TypeIs
+    from typing_extensions import TypeIs, deprecated
 
 if sys.version_info >= (3, 15):  # pragma: no cover
     from typing import TypeAliasType, TypeForm
@@ -1139,6 +1140,15 @@ def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type
     return cast("tuple[type[TE], ...]", classes)
 
 
+@overload
+def as_result(
+    exception: TypeForm[TE], /
+) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]: ...
+@overload
+@deprecated("as_result(A, B) is deprecated; pass one union: as_result(A | B)")
+def as_result(
+    *exceptions: TypeForm[TE],
+) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]: ...
 def as_result(
     *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]:
@@ -1155,6 +1165,10 @@ def as_result(
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
+
+    .. deprecated::
+        Passing several exception types is deprecated and removed in 2.0; pass one union
+        instead: ``as_result(A | B)``. It emits ``DeprecationWarning``.
 
     Examples:
         >>> @as_result(ValueError)
@@ -1176,6 +1190,12 @@ def as_result(
         Err(<class 'KeyError'>)
 
     """
+    if len(exceptions) > 1:
+        warnings.warn(
+            "as_result(A, B) is deprecated; pass one union: as_result(A | B)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     classes = _exception_classes("as_result", exceptions)
 
     def decorator(f: Callable[P, R]) -> Callable[P, Result[R, TE]]:
@@ -1191,6 +1211,19 @@ def as_result(
     return decorator
 
 
+@overload
+def as_async_result(
+    exception: TypeForm[TE], /
+) -> Callable[
+    [Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]
+]: ...
+@overload
+@deprecated("as_async_result(A, B) is deprecated; pass one union: as_async_result(A | B)")
+def as_async_result(
+    *exceptions: TypeForm[TE],
+) -> Callable[
+    [Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]
+]: ...
 def as_async_result(
     *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]]:
@@ -1208,6 +1241,10 @@ def as_async_result(
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
 
+    .. deprecated::
+        Passing several exception types is deprecated and removed in 2.0; pass one union
+        instead: ``as_async_result(A | B)``. It emits ``DeprecationWarning``.
+
     Examples:
         >>> import asyncio
         >>> @as_async_result(ValueError | KeyError)
@@ -1219,6 +1256,12 @@ def as_async_result(
         Err(<class 'KeyError'>)
 
     """
+    if len(exceptions) > 1:
+        warnings.warn(
+            "as_async_result(A, B) is deprecated; pass one union: as_async_result(A | B)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
     classes = _exception_classes("as_async_result", exceptions)
 
     def decorator(

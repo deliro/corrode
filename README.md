@@ -527,6 +527,10 @@ union of classes, a type alias of those (`type X = ...`, `TypeAlias` or
 `TypeError` when the decorator is applied (at import time), even where a type
 checker accepts it.
 
+List several exception types as one union, `as_result(A | B)`. Passing them as
+separate arguments, `as_result(A, B)`, still works but is deprecated: it emits
+`DeprecationWarning` and goes away in 2.0.
+
 `try`/`except` and `Result` mix freely in the same function — catch what you
 caught before and wrap it in `Err`.
 

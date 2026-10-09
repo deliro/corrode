@@ -5,6 +5,7 @@ import copy
 import pickle
 import sys
 import typing
+import warnings
 
 import pytest
 from typing_extensions import TypeAliasType
@@ -686,10 +687,13 @@ class TestAsResult:
         assert result.unwrap() == 123
 
     def test_caught_exception(self) -> None:
-        @as_result(IndexError, ValueError)
-        def bad(value: int) -> int:
-            raise ValueError(value)
+        with pytest.warns(DeprecationWarning, match=r"as_result\(A, B\) is deprecated") as record:
 
+            @as_result(IndexError, ValueError)
+            def bad(value: int) -> int:
+                raise ValueError(value)
+
+        assert record[0].filename == __file__
         result = bad(123)
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
@@ -811,10 +815,15 @@ class TestAsAsyncResult:
 
     @pytest.mark.asyncio
     async def test_caught_exception(self) -> None:
-        @as_async_result(IndexError, ValueError)
-        async def bad(value: int) -> int:
-            raise ValueError(value)
+        with pytest.warns(
+            DeprecationWarning, match=r"as_async_result\(A, B\) is deprecated"
+        ) as record:
 
+            @as_async_result(IndexError, ValueError)
+            async def bad(value: int) -> int:
+                raise ValueError(value)
+
+        assert record[0].filename == __file__
         result = await bad(123)
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
@@ -918,6 +927,40 @@ class TestRejectionContract:
         with pytest.raises(TypeError) as exc_info:
             decorator()
         assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    @_BOTH
+    def test_single_argument_emits_no_warning(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,  # noqa: ARG002
+    ) -> None:
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            decorator(ValueError)
+        assert recorded == []
+
+    @_BOTH
+    def test_only_variadic_overload_is_marked_deprecated(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,
+    ) -> None:
+        single, variadic = typing.get_overloads(decorator)
+        message = f"{name}(A, B) is deprecated; pass one union: {name}(A | B)"
+        assert getattr(single, "__deprecated__", None) is None
+        assert getattr(variadic, "__deprecated__", None) == message
+
+    @_BOTH
+    def test_empty_call_emits_no_deprecation_warning(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,  # noqa: ARG002
+    ) -> None:
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            with pytest.raises(TypeError):
+                decorator()
+        assert recorded == []
 
     @_BOTH
     def test_union_names_offending_member(

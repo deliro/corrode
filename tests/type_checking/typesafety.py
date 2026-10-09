@@ -169,7 +169,7 @@ def parse(s: str) -> int:
     return int(s)
 
 
-_as_result: Result[int, ValueError] = parse("42")
+assert_type(parse("42"), Result[int, ValueError])
 
 
 @as_async_result(OSError)
