@@ -67,7 +67,7 @@ class Ok(Generic[T_co]):
         msg = "Ok is immutable"
         raise AttributeError(msg)
 
-    def __reduce__(self) -> tuple[Callable[[T_co], Ok[T_co]], tuple[T_co]]:
+    def __reduce__(self) -> tuple[type[Ok[object]], tuple[object]]:
         return (Ok, (self._value,))
 
     def __repr__(self) -> str:
@@ -605,7 +605,7 @@ class Err(Generic[E_co]):
         msg = "Err is immutable"
         raise AttributeError(msg)
 
-    def __reduce__(self) -> tuple[Callable[[E_co], Err[E_co]], tuple[E_co]]:
+    def __reduce__(self) -> tuple[type[Err[object]], tuple[object]]:
         return (Err, (self._value,))
 
     def __repr__(self) -> str:
