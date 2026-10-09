@@ -24,6 +24,26 @@ from corrode import (
     is_ok,
 )
 
+_Errs = TypeAliasType("_Errs", ValueError | KeyError)
+_AllErrs = TypeAliasType("_AllErrs", _Errs | TimeoutError)
+_OldErrs: typing.TypeAlias = ValueError | KeyError
+_Wrapped = TypeAliasType("_Wrapped", _Errs)
+_AnnErr = TypeAliasType("_AnnErr", typing.Annotated[ValueError, "x"])
+_Interrupts = TypeAliasType("_Interrupts", ValueError | KeyboardInterrupt)
+_Groups = TypeAliasType("_Groups", ExceptionGroup[ValueError])
+
+
+NT = typing.NewType("NT", ValueError)
+_BOTH = pytest.mark.parametrize(
+    ("decorator", "name"),
+    [(as_result, "as_result"), (as_async_result, "as_async_result")],
+)
+_REQUIRES = "{name}() requires one or more exception types (subclasses of Exception)"
+_UNCHECKABLE = (
+    "{name}(): {shown} is not runtime-checkable; pass a class, X | Y, Annotated or a type alias"
+)
+
+
 # ---------------------------------------------------------------------------
 # Construction, repr, equality, hashing
 # ---------------------------------------------------------------------------
@@ -667,15 +687,6 @@ class TestTypeGuards:
 # ---------------------------------------------------------------------------
 
 
-_Errs = TypeAliasType("_Errs", ValueError | KeyError)
-_AllErrs = TypeAliasType("_AllErrs", _Errs | TimeoutError)
-_OldErrs: typing.TypeAlias = ValueError | KeyError
-_Wrapped = TypeAliasType("_Wrapped", _Errs)
-_AnnErr = TypeAliasType("_AnnErr", typing.Annotated[ValueError, "x"])
-_Interrupts = TypeAliasType("_Interrupts", ValueError | KeyboardInterrupt)
-_Groups = TypeAliasType("_Groups", ExceptionGroup[ValueError])
-
-
 class TestAsResult:
     def test_success(self) -> None:
         @as_result(ValueError)
@@ -906,17 +917,6 @@ class TestAsAsyncResult:
         with pytest.raises(IndexError) as exc_info:
             await f()
         assert str(exc_info.value) == "i"
-
-
-NT = typing.NewType("NT", ValueError)
-_BOTH = pytest.mark.parametrize(
-    ("decorator", "name"),
-    [(as_result, "as_result"), (as_async_result, "as_async_result")],
-)
-_REQUIRES = "{name}() requires one or more exception types (subclasses of Exception)"
-_UNCHECKABLE = (
-    "{name}(): {shown} is not runtime-checkable; pass a class, X | Y, Annotated or a type alias"
-)
 
 
 class TestRejectionContract:

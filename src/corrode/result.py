@@ -50,6 +50,14 @@ T4 = TypeVar("T4")
 T5 = TypeVar("T5")
 E2 = TypeVar("E2")
 
+_UNIONS = {types.UnionType, Union}
+# Below 3.15 ``type X = ...`` builds typing.TypeAliasType, distinct from typing_extensions'.
+_ALIASES: tuple[type[TypeAliasType], ...] = (
+    TypeAliasType,
+    getattr(typing, "TypeAliasType", TypeAliasType),
+)
+
+
 _TRUTHINESS_MSG = (
     "Ok and Err have no truth value; use is_ok()/is_err(), pattern matching, "
     "or is_ok_and()/is_err_and() instead of `if result:`"
@@ -1098,23 +1106,15 @@ class UnwrapError(Exception):
         return self._result
 
 
-_UNIONS = {types.UnionType, Union}
-# Below 3.15 ``type X = ...`` builds typing.TypeAliasType, distinct from typing_extensions'.
-_ALIASES: tuple[type[TypeAliasType], ...] = (
-    TypeAliasType,
-    getattr(typing, "TypeAliasType", TypeAliasType),
-)
-
-
-def _flatten(form: object) -> tuple[object, ...]:
+def _flatten_exception_form(form: object) -> tuple[object, ...]:
     """Unwrap type aliases and ``Annotated``, and expand unions, recursively."""
     if isinstance(form, _ALIASES):
-        return _flatten(form.__value__)
+        return _flatten_exception_form(form.__value__)
     origin = get_origin(form)
     if origin is Annotated:
-        return _flatten(get_args(form)[0])
+        return _flatten_exception_form(get_args(form)[0])
     if origin in _UNIONS:
-        return tuple(c for arg in get_args(form) for c in _flatten(arg))
+        return tuple(c for arg in get_args(form) for c in _flatten_exception_form(arg))
     return (form,)
 
 
@@ -1126,7 +1126,10 @@ def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type
     are not runtime-checkable; classes outside ``Exception`` and empty calls get "requires".
     Raises ``TypeError`` on either.
     """
-    classes = tuple(c for form in forms for c in _flatten(form))
+    classes = tuple(c for form in forms for c in _flatten_exception_form(form))
+    requires = f"{name}() requires one or more exception types (subclasses of Exception)"
+    if not classes:
+        raise TypeError(requires)
     for c in classes:
         if not isinstance(c, type):
             msg = (
@@ -1134,9 +1137,8 @@ def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type
                 "pass a class, X | Y, Annotated or a type alias"
             )
             raise TypeError(msg)
-    if not classes or not all(isinstance(c, type) and issubclass(c, Exception) for c in classes):
-        msg = f"{name}() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+        if not issubclass(c, Exception):
+            raise TypeError(requires)
     return cast("tuple[type[TE], ...]", classes)
 
 
@@ -1167,8 +1169,8 @@ def as_result(
     propagate — swallowing them breaks interrupts and task cancellation.
 
     .. deprecated::
-        Passing several exception types is deprecated and removed in 2.0; pass one union
-        instead: ``as_result(A | B)``. It emits ``DeprecationWarning``.
+        Passing several exception types is deprecated and will be removed; pass one
+        union instead: ``as_result(A | B)``. It emits ``DeprecationWarning``.
 
     Examples:
         >>> @as_result(ValueError)
@@ -1242,8 +1244,8 @@ def as_async_result(
     propagate — swallowing them breaks interrupts and task cancellation.
 
     .. deprecated::
-        Passing several exception types is deprecated and removed in 2.0; pass one union
-        instead: ``as_async_result(A | B)``. It emits ``DeprecationWarning``.
+        Passing several exception types is deprecated and will be removed; pass one
+        union instead: ``as_async_result(A | B)``. It emits ``DeprecationWarning``.
 
     Examples:
         >>> import asyncio
