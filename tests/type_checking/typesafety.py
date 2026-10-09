@@ -7,7 +7,9 @@ statically to ensure the corrode public API is correctly typed.
 from __future__ import annotations
 
 from collections.abc import Awaitable
-from typing import assert_type
+from typing import Annotated, assert_type
+
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -193,6 +195,34 @@ async def fetch_union(s: str) -> int:
 
 async def _check_fetch_union() -> None:
     assert_type(await fetch_union("1"), Result[int, ValueError | KeyError])
+
+
+HttpErrors = TypeAliasType("HttpErrors", ValueError | KeyError)
+AllErrors = TypeAliasType("AllErrors", HttpErrors | TimeoutError)
+
+
+@as_result(HttpErrors)
+def parse_alias(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_alias("1"), Result[int, ValueError | KeyError])
+
+
+@as_result(AllErrors)
+def parse_all(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_all("1"), Result[int, ValueError | KeyError | TimeoutError])
+
+
+@as_result(Annotated[ValueError, "x"])
+def parse_annotated(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_annotated("1"), Result[int, ValueError])
 
 
 # ---------------------------------------------------------------------------

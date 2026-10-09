@@ -5,9 +5,11 @@ from __future__ import annotations
 import functools
 import sys
 import types
+import typing
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator, Iterator
 from typing import (
+    Annotated,
     Any,
     Generic,
     Literal,
@@ -29,9 +31,9 @@ else:  # pragma: no cover
     from typing_extensions import TypeIs
 
 if sys.version_info >= (3, 15):  # pragma: no cover
-    from typing import TypeForm
+    from typing import TypeAliasType, TypeForm
 else:
-    from typing_extensions import TypeForm
+    from typing_extensions import TypeAliasType, TypeForm
 
 T_co = TypeVar("T_co", covariant=True)  # Success type
 E_co = TypeVar("E_co", covariant=True)  # Error type
@@ -1096,18 +1098,34 @@ class UnwrapError(Exception):
 
 
 _UNIONS = {types.UnionType, Union}
+# Below 3.15 ``type X = ...`` builds typing.TypeAliasType, distinct from typing_extensions'.
+_ALIASES: tuple[type[TypeAliasType], ...] = (
+    TypeAliasType,
+    getattr(typing, "TypeAliasType", TypeAliasType),
+)
+
+
+def _flatten(form: object) -> tuple[object, ...]:
+    """Unwrap type aliases and ``Annotated``, and expand unions, recursively."""
+    if isinstance(form, _ALIASES):
+        return _flatten(form.__value__)
+    origin = get_origin(form)
+    if origin is Annotated:
+        return _flatten(get_args(form)[0])
+    if origin in _UNIONS:
+        return tuple(c for arg in get_args(form) for c in _flatten(arg))
+    return (form,)
 
 
 def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type[TE], ...]:
     """
-    Flatten ``X | Y`` / ``Union[X, Y]`` forms into exception classes, or raise ``TypeError``.
+    Flatten classes, ``X | Y`` unions, type aliases and ``Annotated`` into exception classes.
 
     Non-classes (``ExceptionGroup[E]``, ``type[E]``, ``Literal``, strings, ``NewType``, tuples)
     are not runtime-checkable; classes outside ``Exception`` and empty calls get "requires".
+    Raises ``TypeError`` on either.
     """
-    classes = tuple(
-        c for form in forms for c in (get_args(form) if get_origin(form) in _UNIONS else (form,))
-    )
+    classes = tuple(c for form in forms for c in _flatten(form))
     for c in classes:
         if not isinstance(c, type):
             msg = (
@@ -1129,6 +1147,10 @@ def as_result(
 
     Regular return values are turned into ``Ok(return_value)``. Raised
     exceptions of the specified exception type(s) are turned into ``Err(exc)``.
+
+    Accepted forms: an exception class, ``X | Y`` / ``Union[X, Y]``, a type alias of those
+    (``type X = ...``, ``TypeAlias`` or ``TypeAliasType``) and ``Annotated[...]``. Anything
+    else raises ``TypeError`` at decoration.
 
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
@@ -1177,6 +1199,10 @@ def as_async_result(
 
     Regular return values are turned into ``Ok(return_value)``. Raised
     exceptions of the specified exception type(s) are turned into ``Err(exc)``.
+
+    Accepted forms: an exception class, ``X | Y`` / ``Union[X, Y]``, a type alias of those
+    (``type X = ...``, ``TypeAlias`` or ``TypeAliasType``) and ``Annotated[...]``. Anything
+    else raises ``TypeError`` at decoration.
 
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must

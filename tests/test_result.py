@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import copy
 import pickle
+import sys
 import typing
 
 import pytest
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -664,6 +666,15 @@ class TestTypeGuards:
 # ---------------------------------------------------------------------------
 
 
+_Errs = TypeAliasType("_Errs", ValueError | KeyError)
+_AllErrs = TypeAliasType("_AllErrs", _Errs | TimeoutError)
+_OldErrs: typing.TypeAlias = ValueError | KeyError
+_Wrapped = TypeAliasType("_Wrapped", _Errs)
+_AnnErr = TypeAliasType("_AnnErr", typing.Annotated[ValueError, "x"])
+_Interrupts = TypeAliasType("_Interrupts", ValueError | KeyboardInterrupt)
+_Groups = TypeAliasType("_Groups", ExceptionGroup[ValueError])
+
+
 class TestAsResult:
     def test_success(self) -> None:
         @as_result(ValueError)
@@ -718,6 +729,15 @@ class TestAsResult:
             (ValueError | KeyError, KeyError("k")),
             (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
             (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+            (_Errs, ValueError("v")),
+            (_Errs, KeyError("k")),
+            (_AllErrs, KeyError("k")),
+            (_AllErrs, TimeoutError("t")),
+            (_OldErrs, ValueError("v")),
+            (_OldErrs, KeyError("k")),
+            (typing.Annotated[ValueError, "x"], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], KeyError("k")),
         ],
     )
     def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
@@ -731,7 +751,16 @@ class TestAsResult:
 
     @pytest.mark.parametrize(
         "form",
-        [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
+        [
+            ValueError,
+            ValueError | KeyError,
+            typing.Union[ValueError, KeyError],  # noqa: UP007
+            _Errs,
+            _AllErrs,
+            _OldErrs,
+            typing.Annotated[ValueError, "x"],
+            typing.Annotated[ValueError | KeyError, 1],
+        ],
     )
     def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
         @as_result(form)
@@ -741,6 +770,32 @@ class TestAsResult:
         with pytest.raises(IndexError) as exc_info:
             f()
         assert str(exc_info.value) == "i"
+
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [(_Wrapped, KeyError("k")), (_AnnErr, ValueError("v"))],
+    )
+    def test_nested_wrappers_are_flattened(self, form: object, raised: Exception) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise raised
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="typing.TypeAliasType is 3.12+")
+    def test_stdlib_type_alias_is_unwrapped(self) -> None:
+        errs = typing.TypeAliasType("Errs", ValueError | KeyError)
+        exc = KeyError("k")
+
+        @as_result(errs)
+        def f() -> int:
+            raise exc
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is exc
 
 
 class TestAsAsyncResult:
@@ -800,6 +855,15 @@ class TestAsAsyncResult:
             (ValueError | KeyError, KeyError("k")),
             (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
             (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+            (_Errs, ValueError("v")),
+            (_Errs, KeyError("k")),
+            (_AllErrs, KeyError("k")),
+            (_AllErrs, TimeoutError("t")),
+            (_OldErrs, ValueError("v")),
+            (_OldErrs, KeyError("k")),
+            (typing.Annotated[ValueError, "x"], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], KeyError("k")),
         ],
     )
     async def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
@@ -814,7 +878,16 @@ class TestAsAsyncResult:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "form",
-        [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
+        [
+            ValueError,
+            ValueError | KeyError,
+            typing.Union[ValueError, KeyError],  # noqa: UP007
+            _Errs,
+            _AllErrs,
+            _OldErrs,
+            typing.Annotated[ValueError, "x"],
+            typing.Annotated[ValueError | KeyError, 1],
+        ],
     )
     async def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
         @as_async_result(form)
@@ -865,6 +938,8 @@ class TestRejectionContract:
             (type[ValueError], "type[ValueError]"),
             (NT, "tests.test_result.NT"),
             (typing.Literal[1], "typing.Literal[1]"),
+            (typing.Annotated[ExceptionGroup[ValueError], 1], "ExceptionGroup[ValueError]"),
+            (_Groups, "ExceptionGroup[ValueError]"),
             ((ValueError, KeyError), "(<class 'ValueError'>, <class 'KeyError'>)"),
         ],
     )
@@ -883,6 +958,8 @@ class TestRejectionContract:
             typing.Optional[ValueError],  # noqa: UP045
             ValueError | KeyboardInterrupt,
             ValueError | asyncio.CancelledError,
+            _Interrupts,
+            typing.Annotated[ValueError | asyncio.CancelledError, 1],
             int,
         ],
     )
