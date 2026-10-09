@@ -520,6 +520,11 @@ assert parse_port("MISSING") == Err(MissingKey(key="MISSING"))
 `SystemExit`, and `asyncio.CancelledError` always propagate, so Ctrl-C and
 task cancellation keep working no matter what you wrap.
 
+Only forms that `isinstance` can check are supported: a class or an `X | Y`
+union of classes. Anything else — `ExceptionGroup[ValueError]`, `type[E]`, a
+string, a `NewType` — raises `TypeError` when the decorator is applied (at
+import time), even where a type checker accepts it.
+
 `try`/`except` and `Result` mix freely in the same function — catch what you
 caught before and wrap it in `Err`.
 

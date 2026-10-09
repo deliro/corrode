@@ -1099,10 +1099,22 @@ _UNIONS = {types.UnionType, Union}
 
 
 def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type[TE], ...]:
-    """Flatten ``X | Y`` / ``Union[X, Y]`` forms into exception classes, or raise ``TypeError``."""
+    """
+    Flatten ``X | Y`` / ``Union[X, Y]`` forms into exception classes, or raise ``TypeError``.
+
+    Non-classes (``ExceptionGroup[E]``, ``type[E]``, ``Literal``, strings, ``NewType``, tuples)
+    are not runtime-checkable; classes outside ``Exception`` and empty calls get "requires".
+    """
     classes = tuple(
         c for form in forms for c in (get_args(form) if get_origin(form) in _UNIONS else (form,))
     )
+    for c in classes:
+        if not isinstance(c, type):
+            msg = (
+                f"{name}(): {c!r} is not runtime-checkable; "
+                "pass a class, X | Y, Annotated or a type alias"
+            )
+            raise TypeError(msg)
     if not classes or not all(isinstance(c, type) and issubclass(c, Exception) for c in classes):
         msg = f"{name}() requires one or more exception types (subclasses of Exception)"
         raise TypeError(msg)

@@ -691,25 +691,22 @@ class TestAsResult:
         with pytest.raises(IndexError):
             f()
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
-
-            @as_result()
-            def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_result("not an exception type")  # type: ignore[arg-type]
             def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         # KeyboardInterrupt / SystemExit / CancelledError must never be swallowed
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_result(KeyboardInterrupt)  # type: ignore[type-var]
+            @as_result(KeyboardInterrupt)
             def f() -> int:
                 return 1
 
@@ -724,7 +721,7 @@ class TestAsResult:
         ],
     )
     def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
-        @as_result(form)  # type: ignore[type-var]
+        @as_result(form)
         def f() -> int:
             raise raised
 
@@ -737,33 +734,13 @@ class TestAsResult:
         [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
     )
     def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
-        @as_result(form)  # type: ignore[type-var]
+        @as_result(form)
         def f() -> int:
             raise IndexError("i")
 
         with pytest.raises(IndexError) as exc_info:
             f()
         assert str(exc_info.value) == "i"
-
-    def test_union_with_base_exception_only_class_rejected(self) -> None:
-        with pytest.raises(TypeError) as exc_info:
-            as_result(ValueError | KeyboardInterrupt)  # type: ignore[type-var]
-        assert (
-            str(exc_info.value)
-            == "as_result() requires one or more exception types (subclasses of Exception)"
-        )
-
-    @pytest.mark.parametrize(
-        ("decorator", "name"),
-        [(as_result, "as_result"), (as_async_result, "as_async_result")],
-    )
-    def test_tuple_form_rejected(self, decorator: typing.Callable[..., object], name: str) -> None:
-        with pytest.raises(TypeError) as exc_info:
-            decorator((ValueError, KeyError))
-        assert (
-            str(exc_info.value)
-            == f"{name}() requires one or more exception types (subclasses of Exception)"
-        )
 
 
 class TestAsAsyncResult:
@@ -787,24 +764,21 @@ class TestAsAsyncResult:
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
-
-            @as_async_result()
-            async def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_async_result("not an exception type")  # type: ignore[arg-type]
             async def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_async_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_async_result(asyncio.CancelledError)  # type: ignore[type-var]
+            @as_async_result(asyncio.CancelledError)
             async def f() -> int:
                 return 1
 
@@ -829,7 +803,7 @@ class TestAsAsyncResult:
         ],
     )
     async def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
-        @as_async_result(form)  # type: ignore[type-var]
+        @as_async_result(form)
         async def f() -> int:
             raise raised
 
@@ -843,7 +817,7 @@ class TestAsAsyncResult:
         [ValueError, ValueError | KeyError, typing.Union[ValueError, KeyError]],  # noqa: UP007
     )
     async def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
-        @as_async_result(form)  # type: ignore[type-var]
+        @as_async_result(form)
         async def f() -> int:
             raise IndexError("i")
 
@@ -851,12 +825,80 @@ class TestAsAsyncResult:
             await f()
         assert str(exc_info.value) == "i"
 
-    def test_union_with_cancelled_error_rejected(self) -> None:
+
+NT = typing.NewType("NT", ValueError)
+_BOTH = pytest.mark.parametrize(
+    ("decorator", "name"),
+    [(as_result, "as_result"), (as_async_result, "as_async_result")],
+)
+_REQUIRES = "{name}() requires one or more exception types (subclasses of Exception)"
+_UNCHECKABLE = (
+    "{name}(): {shown} is not runtime-checkable; pass a class, X | Y, Annotated or a type alias"
+)
+
+
+class TestRejectionContract:
+    @_BOTH
+    def test_empty_call_keeps_requires_message(
+        self, decorator: typing.Callable[..., object], name: str
+    ) -> None:
         with pytest.raises(TypeError) as exc_info:
-            as_async_result(ValueError | asyncio.CancelledError)  # type: ignore[type-var]
-        assert str(exc_info.value) == (
-            "as_async_result() requires one or more exception types (subclasses of Exception)"
+            decorator()
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    @_BOTH
+    def test_union_names_offending_member(
+        self, decorator: typing.Callable[..., object], name: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(ValueError | ExceptionGroup[ValueError])
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name=name, shown="ExceptionGroup[ValueError]"
         )
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        ("form", "shown"),
+        [
+            (ExceptionGroup[ValueError], "ExceptionGroup[ValueError]"),
+            ("ValueError", "'ValueError'"),
+            (type[ValueError], "type[ValueError]"),
+            (NT, "tests.test_result.NT"),
+            (typing.Literal[1], "typing.Literal[1]"),
+            ((ValueError, KeyError), "(<class 'ValueError'>, <class 'KeyError'>)"),
+        ],
+    )
+    def test_non_runtime_checkable_form_rejected(
+        self, decorator: typing.Callable[..., object], name: str, form: object, shown: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _UNCHECKABLE.format(name=name, shown=shown)
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        "form",
+        [
+            ValueError | None,
+            typing.Optional[ValueError],  # noqa: UP045
+            ValueError | KeyboardInterrupt,
+            ValueError | asyncio.CancelledError,
+            int,
+        ],
+    )
+    def test_non_exception_class_keeps_requires_message(
+        self, decorator: typing.Callable[..., object], name: str, form: object
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    def test_exception_group_alias_never_catches_bare_value_error(self) -> None:
+        def raises_value_error() -> int:
+            raise ValueError("v")
+
+        with pytest.raises(TypeError, match="not runtime-checkable"):
+            as_result(ExceptionGroup[ValueError])(raises_value_error)
 
 
 # ---------------------------------------------------------------------------
