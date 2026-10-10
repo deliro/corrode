@@ -449,7 +449,7 @@ asyncio.run(main())
 
 `corrode` is designed for gradual adoption — no big-bang rewrite:
 
-1. **Wrap** existing functions with `@as_result(ExcType, ...)` — the body is
+1. **Wrap** existing functions with `@as_result(KeyError | ValueError)` — the body is
    unchanged, callers start receiving `Result` with the exception inside `Err`.
 2. **Return `Err(exc)` explicitly** — replace `raise` with `return Err(exc)`
    and drop the decorator; the error types move into the signature, callers
@@ -467,7 +467,7 @@ os.environ["PORT"] = "8080"
 
 # Step 1: wrap — the body is untouched, callers get Result.
 # Raised KeyError / ValueError become Err(exc); other exceptions propagate.
-@as_result(KeyError, ValueError)
+@as_result(KeyError | ValueError)
 def parse_port_wrapped(key: str) -> int:
     return int(os.environ[key])
 
@@ -519,6 +519,17 @@ assert parse_port("MISSING") == Err(MissingKey(key="MISSING"))
 `@as_result` accepts only `Exception` subclasses — `KeyboardInterrupt`,
 `SystemExit`, and `asyncio.CancelledError` always propagate, so Ctrl-C and
 task cancellation keep working no matter what you wrap.
+
+Only forms that `isinstance` can check are supported: a class, an `X | Y`
+union of classes, a type alias of those (`type X = ...`, `TypeAlias` or
+`TypeAliasType`) or `Annotated[...]` around one. Anything else —
+`ExceptionGroup[ValueError]`, `type[E]`, a string, a `NewType` — raises
+`TypeError` when the decorator is applied (at import time), even where a type
+checker accepts it.
+
+List several exception types as one union, `as_result(A | B)`. Passing them as
+separate arguments, `as_result(A, B)`, still works but is deprecated: it emits
+`DeprecationWarning` and will be removed.
 
 `try`/`except` and `Result` mix freely in the same function — catch what you
 caught before and wrap it in `Err`.

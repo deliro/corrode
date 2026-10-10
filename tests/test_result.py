@@ -3,8 +3,12 @@ from __future__ import annotations
 import asyncio
 import copy
 import pickle
+import sys
+import typing
+import warnings
 
 import pytest
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -19,6 +23,26 @@ from corrode import (
     is_err,
     is_ok,
 )
+
+_Errs = TypeAliasType("_Errs", ValueError | KeyError)
+_AllErrs = TypeAliasType("_AllErrs", _Errs | TimeoutError)
+_OldErrs: typing.TypeAlias = ValueError | KeyError
+_Wrapped = TypeAliasType("_Wrapped", _Errs)
+_AnnErr = TypeAliasType("_AnnErr", typing.Annotated[ValueError, "x"])
+_Interrupts = TypeAliasType("_Interrupts", ValueError | KeyboardInterrupt)
+_Groups = TypeAliasType("_Groups", ExceptionGroup[ValueError])
+
+
+NT = typing.NewType("NT", ValueError)
+_BOTH = pytest.mark.parametrize(
+    ("decorator", "name"),
+    [(as_result, "as_result"), (as_async_result, "as_async_result")],
+)
+_REQUIRES = "{name}() requires one or more exception types (subclasses of Exception)"
+_UNCHECKABLE = (
+    "{name}(): {shown} is not runtime-checkable; pass a class, X | Y, Annotated or a type alias"
+)
+
 
 # ---------------------------------------------------------------------------
 # Construction, repr, equality, hashing
@@ -674,10 +698,13 @@ class TestAsResult:
         assert result.unwrap() == 123
 
     def test_caught_exception(self) -> None:
-        @as_result(IndexError, ValueError)
-        def bad(value: int) -> int:
-            raise ValueError(value)
+        with pytest.warns(DeprecationWarning, match=r"as_result\(A, B\) is deprecated") as record:
 
+            @as_result(IndexError, ValueError)
+            def bad(value: int) -> int:
+                raise ValueError(value)
+
+        assert record[0].filename == __file__
         result = bad(123)
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
@@ -690,27 +717,100 @@ class TestAsResult:
         with pytest.raises(IndexError):
             f()
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
-
-            @as_result()
-            def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_result("not an exception type")  # type: ignore[arg-type]
             def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         # KeyboardInterrupt / SystemExit / CancelledError must never be swallowed
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_result(KeyboardInterrupt)  # type: ignore[type-var]
+            @as_result(KeyboardInterrupt)
             def f() -> int:
                 return 1
+
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [
+            (ValueError, ValueError("v")),
+            (ValueError | KeyError, ValueError("v")),
+            (ValueError | KeyError, KeyError("k")),
+            (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
+            (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+            (_Errs, ValueError("v")),
+            (_Errs, KeyError("k")),
+            (_AllErrs, KeyError("k")),
+            (_AllErrs, TimeoutError("t")),
+            (_OldErrs, ValueError("v")),
+            (_OldErrs, KeyError("k")),
+            (typing.Annotated[ValueError, "x"], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], KeyError("k")),
+        ],
+    )
+    def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise raised
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.parametrize(
+        "form",
+        [
+            ValueError,
+            ValueError | KeyError,
+            typing.Union[ValueError, KeyError],  # noqa: UP007
+            _Errs,
+            _AllErrs,
+            _OldErrs,
+            typing.Annotated[ValueError, "x"],
+            typing.Annotated[ValueError | KeyError, 1],
+        ],
+    )
+    def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            f()
+        assert str(exc_info.value) == "i"
+
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [(_Wrapped, KeyError("k")), (_AnnErr, ValueError("v"))],
+    )
+    def test_nested_wrappers_are_flattened(self, form: object, raised: Exception) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise raised
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="typing.TypeAliasType is 3.12+")
+    def test_stdlib_type_alias_is_unwrapped(self) -> None:
+        errs = typing.TypeAliasType("Errs", ValueError | KeyError)
+        exc = KeyError("k")
+
+        @as_result(errs)
+        def f() -> int:
+            raise exc
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is exc
 
 
 class TestAsAsyncResult:
@@ -726,32 +826,34 @@ class TestAsAsyncResult:
 
     @pytest.mark.asyncio
     async def test_caught_exception(self) -> None:
-        @as_async_result(IndexError, ValueError)
-        async def bad(value: int) -> int:
-            raise ValueError(value)
+        with pytest.warns(
+            DeprecationWarning, match=r"as_async_result\(A, B\) is deprecated"
+        ) as record:
 
+            @as_async_result(IndexError, ValueError)
+            async def bad(value: int) -> int:
+                raise ValueError(value)
+
+        assert record[0].filename == __file__
         result = await bad(123)
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
-
-            @as_async_result()
-            async def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_async_result("not an exception type")  # type: ignore[arg-type]
             async def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_async_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_async_result(asyncio.CancelledError)  # type: ignore[type-var]
+            @as_async_result(asyncio.CancelledError)
             async def f() -> int:
                 return 1
 
@@ -763,6 +865,160 @@ class TestAsAsyncResult:
 
         with pytest.raises(IndexError):
             await f()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("form", "raised"),
+        [
+            (ValueError, ValueError("v")),
+            (ValueError | KeyError, ValueError("v")),
+            (ValueError | KeyError, KeyError("k")),
+            (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
+            (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+            (_Errs, ValueError("v")),
+            (_Errs, KeyError("k")),
+            (_AllErrs, KeyError("k")),
+            (_AllErrs, TimeoutError("t")),
+            (_OldErrs, ValueError("v")),
+            (_OldErrs, KeyError("k")),
+            (typing.Annotated[ValueError, "x"], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], ValueError("v")),
+            (typing.Annotated[ValueError | KeyError, 1], KeyError("k")),
+        ],
+    )
+    async def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_async_result(form)
+        async def f() -> int:
+            raise raised
+
+        result = await f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "form",
+        [
+            ValueError,
+            ValueError | KeyError,
+            typing.Union[ValueError, KeyError],  # noqa: UP007
+            _Errs,
+            _AllErrs,
+            _OldErrs,
+            typing.Annotated[ValueError, "x"],
+            typing.Annotated[ValueError | KeyError, 1],
+        ],
+    )
+    async def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_async_result(form)
+        async def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            await f()
+        assert str(exc_info.value) == "i"
+
+
+class TestRejectionContract:
+    @_BOTH
+    def test_empty_call_keeps_requires_message(
+        self, decorator: typing.Callable[..., object], name: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator()
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    @_BOTH
+    def test_single_argument_emits_no_warning(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,  # noqa: ARG002
+    ) -> None:
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            decorator(ValueError)
+        assert recorded == []
+
+    @_BOTH
+    def test_only_variadic_overload_is_marked_deprecated(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,
+    ) -> None:
+        single, variadic = typing.get_overloads(decorator)
+        message = f"{name}(A, B) is deprecated; pass one union: {name}(A | B)"
+        assert getattr(single, "__deprecated__", None) is None
+        assert getattr(variadic, "__deprecated__", None) == message
+
+    @_BOTH
+    def test_empty_call_emits_no_deprecation_warning(
+        self,
+        decorator: typing.Callable[..., object],
+        name: str,  # noqa: ARG002
+    ) -> None:
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            with pytest.raises(TypeError):
+                decorator()
+        assert recorded == []
+
+    @_BOTH
+    def test_union_names_offending_member(
+        self, decorator: typing.Callable[..., object], name: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(ValueError | ExceptionGroup[ValueError])
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name=name, shown="ExceptionGroup[ValueError]"
+        )
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        ("form", "shown"),
+        [
+            (ExceptionGroup[ValueError], "ExceptionGroup[ValueError]"),
+            ("ValueError", "'ValueError'"),
+            (type[ValueError], "type[ValueError]"),
+            (NT, "tests.test_result.NT"),
+            (typing.Literal[1], "typing.Literal[1]"),
+            (typing.Annotated[ExceptionGroup[ValueError], 1], "ExceptionGroup[ValueError]"),
+            (_Groups, "ExceptionGroup[ValueError]"),
+            ((ValueError, KeyError), "(<class 'ValueError'>, <class 'KeyError'>)"),
+        ],
+    )
+    def test_non_runtime_checkable_form_rejected(
+        self, decorator: typing.Callable[..., object], name: str, form: object, shown: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _UNCHECKABLE.format(name=name, shown=shown)
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        "form",
+        [
+            ValueError | None,
+            typing.Optional[ValueError],  # noqa: UP045
+            ValueError | KeyboardInterrupt,
+            ValueError | asyncio.CancelledError,
+            _Interrupts,
+            typing.Annotated[ValueError | asyncio.CancelledError, 1],
+            int,
+        ],
+    )
+    def test_non_exception_class_keeps_requires_message(
+        self, decorator: typing.Callable[..., object], name: str, form: object
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    def test_exception_group_alias_never_catches_bare_value_error(self) -> None:
+        def raises_value_error() -> int:
+            raise ValueError("v")
+
+        with pytest.raises(TypeError, match="not runtime-checkable"):
+            as_result(ExceptionGroup[ValueError])(raises_value_error)
 
 
 # ---------------------------------------------------------------------------

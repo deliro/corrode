@@ -19,16 +19,20 @@ typecheck: lint-mypy lint-basedpyright lint-ty lint-pyrefly
 lint-mypy:
     uv run mypy
     uv run mypy --python-version 3.11
-    uv run mypy tests/type_checking/typesafety.py
+    uv run mypy --python-version 3.11 tests/type_checking/typesafety.py
+    uv run mypy --python-version 3.15 tests/type_checking/typesafety.py
 
 lint-basedpyright:
-    uv run --with basedpyright basedpyright
+    uv run --with basedpyright basedpyright --pythonversion 3.11
+    uv run --with basedpyright basedpyright --pythonversion 3.15
 
 lint-ty:
-    uv run --with ty ty check src/corrode/ tests/type_checking/typesafety.py
+    uv run --with ty ty check --python-version 3.11 src/corrode/ tests/type_checking/typesafety.py
+    uv run --with ty ty check --python-version 3.15 src/corrode/ tests/type_checking/typesafety.py
 
 lint-pyrefly:
-    uv run --with pyrefly pyrefly check src/corrode/ tests/type_checking/typesafety.py
+    uv run --with pyrefly pyrefly check --preset strict --python-version 3.11 src/corrode/ tests/type_checking/typesafety.py
+    uv run --with pyrefly pyrefly check --preset strict --python-version 3.15 src/corrode/ tests/type_checking/typesafety.py
 
 test:
     uv run pytest

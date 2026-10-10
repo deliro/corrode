@@ -7,6 +7,9 @@ statically to ensure the corrode public API is correctly typed.
 from __future__ import annotations
 
 from collections.abc import Awaitable
+from typing import Annotated, assert_type
+
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -166,7 +169,7 @@ def parse(s: str) -> int:
     return int(s)
 
 
-_as_result: Result[int, ValueError] = parse("42")
+assert_type(parse("42"), Result[int, ValueError])
 
 
 @as_async_result(OSError)
@@ -175,6 +178,52 @@ async def fetch(url: str) -> bytes:  # noqa: ARG001
 
 
 _as_async_result: Awaitable[Result[bytes, OSError]] = fetch("http://example.com")
+
+
+@as_result(ValueError | KeyError)
+def parse_union(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_union("1"), Result[int, ValueError | KeyError])
+
+
+@as_async_result(ValueError | KeyError)
+async def fetch_union(s: str) -> int:
+    return int(s)
+
+
+async def _check_fetch_union() -> None:
+    assert_type(await fetch_union("1"), Result[int, ValueError | KeyError])
+
+
+HttpErrors = TypeAliasType("HttpErrors", ValueError | KeyError)
+AllErrors = TypeAliasType("AllErrors", HttpErrors | TimeoutError)
+
+
+@as_result(HttpErrors)
+def parse_alias(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_alias("1"), Result[int, ValueError | KeyError])
+
+
+@as_result(AllErrors)
+def parse_all(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_all("1"), Result[int, ValueError | KeyError | TimeoutError])
+
+
+@as_result(Annotated[ValueError, "x"])
+def parse_annotated(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_annotated("1"), Result[int, ValueError])
+
 
 # ---------------------------------------------------------------------------
 # 12. Async method types

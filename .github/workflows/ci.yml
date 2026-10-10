@@ -47,11 +47,15 @@ jobs:
     strategy:
       matrix:
         python:
+          - "3.15"
           - "3.14"
           - "3.13"
           - "3.12"
           - "3.11"
     name: Python ${{ matrix.python }}
+    env:
+      # uv skips prerelease interpreters unless asked for one explicitly
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v7
 
@@ -64,7 +68,7 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked
 
-      # Coverage is collected on the newest Python only
+      # Coverage is collected on 3.14 (newest stable); 3.15 is a prerelease
       - name: Run tests
         run: uv run pytest ${{ matrix.python == '3.14' && '--cov=corrode --cov-report=xml' || '' }}
 
@@ -89,13 +93,20 @@ jobs:
             run: >
               uv run mypy
               && uv run mypy --python-version 3.11
-              && uv run mypy tests/type_checking/typesafety.py
+              && uv run mypy --python-version 3.11 tests/type_checking/typesafety.py
+              && uv run mypy --python-version 3.15 tests/type_checking/typesafety.py
           - checker: basedpyright
-            run: uv run --with basedpyright basedpyright
+            run: >
+              uv run --with basedpyright basedpyright --pythonversion 3.11
+              && uv run --with basedpyright basedpyright --pythonversion 3.15
           - checker: ty
-            run: uv run --with ty ty check src/corrode/ tests/type_checking/typesafety.py
+            run: >
+              uv run --with ty ty check --python-version 3.11 src/corrode/ tests/type_checking/typesafety.py
+              && uv run --with ty ty check --python-version 3.15 src/corrode/ tests/type_checking/typesafety.py
           - checker: pyrefly
-            run: uv run --with pyrefly pyrefly check src/corrode/ tests/type_checking/typesafety.py
+            run: >
+              uv run --with pyrefly pyrefly check --preset strict --python-version 3.11 src/corrode/ tests/type_checking/typesafety.py
+              && uv run --with pyrefly pyrefly check --preset strict --python-version 3.15 src/corrode/ tests/type_checking/typesafety.py
     name: typecheck / ${{ matrix.checker }}
     steps:
       - uses: actions/checkout@v7

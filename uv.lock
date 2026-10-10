@@ -210,7 +210,7 @@ name = "corrode"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
 ]
 
 [package.dev-dependencies]
@@ -229,7 +229,7 @@ docs = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '3.13'", specifier = ">=4.10.0" }]
+requires-dist = [{ name = "typing-extensions", marker = "python_full_version < '3.15'", specifier = ">=4.13.0" }]
 
 [package.metadata.requires-dev]
 dev = [

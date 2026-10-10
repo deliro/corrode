@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import functools
-import inspect
 import sys
+import types
+import typing
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator, Iterator
 from typing import (
+    Annotated,
     Any,
     Generic,
     Literal,
@@ -16,14 +18,23 @@ from typing import (
     Self,
     TypeAlias,
     TypeVar,
+    Union,
     cast,
+    get_args,
+    get_origin,
     overload,
 )
 
 if sys.version_info >= (3, 13):
     from typing import TypeIs
+    from warnings import deprecated
 else:  # pragma: no cover
-    from typing_extensions import TypeIs
+    from typing_extensions import TypeIs, deprecated
+
+if sys.version_info >= (3, 15):  # pragma: no cover
+    from typing import TypeAliasType, TypeForm
+else:
+    from typing_extensions import TypeAliasType, TypeForm
 
 T_co = TypeVar("T_co", covariant=True)  # Success type
 E_co = TypeVar("E_co", covariant=True)  # Error type
@@ -38,6 +49,14 @@ T3 = TypeVar("T3")
 T4 = TypeVar("T4")
 T5 = TypeVar("T5")
 E2 = TypeVar("E2")
+
+_UNIONS = {types.UnionType, Union}
+# Below 3.15 ``type X = ...`` builds typing.TypeAliasType, distinct from typing_extensions'.
+_ALIASES: tuple[type[TypeAliasType], ...] = (
+    TypeAliasType,
+    getattr(typing, "TypeAliasType", TypeAliasType),
+)
+
 
 _TRUTHINESS_MSG = (
     "Ok and Err have no truth value; use is_ok()/is_err(), pattern matching, "
@@ -67,7 +86,7 @@ class Ok(Generic[T_co]):
         msg = "Ok is immutable"
         raise AttributeError(msg)
 
-    def __reduce__(self) -> tuple[Callable[[T_co], Ok[T_co]], tuple[T_co]]:
+    def __reduce__(self) -> tuple[type[Ok[object]], tuple[object]]:
         return (Ok, (self._value,))
 
     def __repr__(self) -> str:
@@ -605,7 +624,7 @@ class Err(Generic[E_co]):
         msg = "Err is immutable"
         raise AttributeError(msg)
 
-    def __reduce__(self) -> tuple[Callable[[E_co], Err[E_co]], tuple[E_co]]:
+    def __reduce__(self) -> tuple[type[Err[object]], tuple[object]]:
         return (Err, (self._value,))
 
     def __repr__(self) -> str:
@@ -1087,8 +1106,53 @@ class UnwrapError(Exception):
         return self._result
 
 
+def _flatten_exception_form(form: object) -> tuple[object, ...]:
+    """Unwrap type aliases and ``Annotated``, and expand unions, recursively."""
+    if isinstance(form, _ALIASES):
+        return _flatten_exception_form(form.__value__)
+    origin = get_origin(form)
+    if origin is Annotated:
+        return _flatten_exception_form(get_args(form)[0])
+    if origin in _UNIONS:
+        return tuple(c for arg in get_args(form) for c in _flatten_exception_form(arg))
+    return (form,)
+
+
+def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type[TE], ...]:
+    """
+    Flatten classes, ``X | Y`` unions, type aliases and ``Annotated`` into exception classes.
+
+    Non-classes (``ExceptionGroup[E]``, ``type[E]``, ``Literal``, strings, ``NewType``, tuples)
+    are not runtime-checkable; classes outside ``Exception`` and empty calls get "requires".
+    Raises ``TypeError`` on either.
+    """
+    classes = tuple(c for form in forms for c in _flatten_exception_form(form))
+    requires = f"{name}() requires one or more exception types (subclasses of Exception)"
+    if not classes:
+        raise TypeError(requires)
+    for c in classes:
+        if not isinstance(c, type):
+            msg = (
+                f"{name}(): {c!r} is not runtime-checkable; "
+                "pass a class, X | Y, Annotated or a type alias"
+            )
+            raise TypeError(msg)
+        if not issubclass(c, Exception):
+            raise TypeError(requires)
+    return cast("tuple[type[TE], ...]", classes)
+
+
+@overload
 def as_result(
-    *exceptions: type[TE],
+    exception: TypeForm[TE], /
+) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]: ...
+@overload
+@deprecated("as_result(A, B) is deprecated; pass one union: as_result(A | B)")
+def as_result(
+    *exceptions: TypeForm[TE],
+) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]: ...
+def as_result(
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]:
     """
     Make a decorator to turn a function into one that returns a ``Result``.
@@ -1096,9 +1160,17 @@ def as_result(
     Regular return values are turned into ``Ok(return_value)``. Raised
     exceptions of the specified exception type(s) are turned into ``Err(exc)``.
 
+    Accepted forms: an exception class, ``X | Y`` / ``Union[X, Y]``, a type alias of those
+    (``type X = ...``, ``TypeAlias`` or ``TypeAliasType``) and ``Annotated[...]``. Anything
+    else raises ``TypeError`` at decoration.
+
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
+
+    .. deprecated::
+        Passing several exception types is deprecated and will be removed; pass one
+        union instead: ``as_result(A | B)``. It emits ``DeprecationWarning``.
 
     Examples:
         >>> @as_result(ValueError)
@@ -1109,19 +1181,31 @@ def as_result(
         >>> parse("x").map_err(type)
         Err(<class 'ValueError'>)
 
+    Several exception types are listed as a union:
+
+        >>> @as_result(ValueError | KeyError)
+        ... def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> lookup({"a": "1"}, "a")
+        Ok(1)
+        >>> lookup({}, "a").map_err(type)
+        Err(<class 'KeyError'>)
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    if len(exceptions) > 1:
+        warnings.warn(
+            "as_result(A, B) is deprecated; pass one union: as_result(A | B)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    classes = _exception_classes("as_result", exceptions)
 
     def decorator(f: Callable[P, R]) -> Callable[P, Result[R, TE]]:
         @functools.wraps(f)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         return wrapper
@@ -1129,8 +1213,21 @@ def as_result(
     return decorator
 
 
+@overload
 def as_async_result(
-    *exceptions: type[TE],
+    exception: TypeForm[TE], /
+) -> Callable[
+    [Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]
+]: ...
+@overload
+@deprecated("as_async_result(A, B) is deprecated; pass one union: as_async_result(A | B)")
+def as_async_result(
+    *exceptions: TypeForm[TE],
+) -> Callable[
+    [Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]
+]: ...
+def as_async_result(
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]]:
     """
     Make a decorator to turn an async function into one that returns a ``Result``.
@@ -1138,15 +1235,36 @@ def as_async_result(
     Regular return values are turned into ``Ok(return_value)``. Raised
     exceptions of the specified exception type(s) are turned into ``Err(exc)``.
 
+    Accepted forms: an exception class, ``X | Y`` / ``Union[X, Y]``, a type alias of those
+    (``type X = ...``, ``TypeAlias`` or ``TypeAliasType``) and ``Annotated[...]``. Anything
+    else raises ``TypeError`` at decoration.
+
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
+
+    .. deprecated::
+        Passing several exception types is deprecated and will be removed; pass one
+        union instead: ``as_async_result(A | B)``. It emits ``DeprecationWarning``.
+
+    Examples:
+        >>> import asyncio
+        >>> @as_async_result(ValueError | KeyError)
+        ... async def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> asyncio.run(lookup({"a": "1"}, "a"))
+        Ok(1)
+        >>> asyncio.run(lookup({}, "a")).map_err(type)
+        Err(<class 'KeyError'>)
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_async_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    if len(exceptions) > 1:
+        warnings.warn(
+            "as_async_result(A, B) is deprecated; pass one union: as_async_result(A | B)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    classes = _exception_classes("as_async_result", exceptions)
 
     def decorator(
         f: Callable[P, Awaitable[R]],
@@ -1155,7 +1273,7 @@ def as_async_result(
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(await f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         # SAFETY: `async_wrapper` is declared as `async def`, so at runtime it
