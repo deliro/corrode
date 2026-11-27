@@ -17,6 +17,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: 3 :: Only",
 ]
 
@@ -108,7 +109,7 @@ pythonVersion = "3.11"
 include = ["src/corrode", "tests/type_checking/typesafety.py"]
 
 [tool.ty.rules]
-invalid-return-type = "ignore"        # false positive: except clause narrowing
+invalid-explicit-return = "ignore"    # false positive: except clause narrowing
 unused-type-ignore-comment = "ignore" # conflicts with mypy's type: ignore
 
 [tool.pytest.ini_options]
