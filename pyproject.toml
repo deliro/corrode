@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "typing_extensions>=4.10.0; python_version < '3.13'",
+    "typing_extensions>=4.13.0; python_version < '3.15'",
 ]
 
 [project.urls]
@@ -46,6 +46,7 @@ dev = [
     "pytest-mypy-plugins>=3.0",
     "mypy>=1.0",
     "ruff>=0.8",
+    "typing_extensions>=4.13.0",
 ]
 docs = [
     "mike>=2.1",

@@ -3,20 +3,34 @@
 from __future__ import annotations
 
 import functools
-import inspect
 import sys
+import types
+import typing
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Generator, Iterator
+from collections.abc import (
+    AsyncGenerator,
+    Awaitable,
+    Callable,
+    Coroutine,
+    Generator,
+    Iterator,
+    Mapping,
+)
 from typing import (
+    Annotated,
     Any,
     Generic,
     Literal,
+    Never,
     NoReturn,
     ParamSpec,
     Self,
     TypeAlias,
     TypeVar,
+    Union,
     cast,
+    get_args,
+    get_origin,
     overload,
 )
 
@@ -24,6 +38,11 @@ if sys.version_info >= (3, 13):
     from typing import TypeIs
 else:  # pragma: no cover
     from typing_extensions import TypeIs
+
+if sys.version_info >= (3, 15):  # pragma: no cover
+    from typing import TypeAliasType, TypeForm
+else:
+    from typing_extensions import TypeAliasType, TypeForm
 
 T_co = TypeVar("T_co", covariant=True)  # Success type
 E_co = TypeVar("E_co", covariant=True)  # Error type
@@ -38,6 +57,14 @@ T3 = TypeVar("T3")
 T4 = TypeVar("T4")
 T5 = TypeVar("T5")
 E2 = TypeVar("E2")
+
+_UNIONS = {types.UnionType, Union}
+# Below 3.15 ``type X = ...`` builds typing.TypeAliasType, distinct from typing_extensions'.
+_ALIASES: tuple[type[TypeAliasType], ...] = (
+    TypeAliasType,
+    getattr(typing, "TypeAliasType", TypeAliasType),
+)
+
 
 _TRUTHINESS_MSG = (
     "Ok and Err have no truth value; use is_ok()/is_err(), pattern matching, "
@@ -1087,8 +1114,96 @@ class UnwrapError(Exception):
         return self._result
 
 
+def _expand_alias(
+    name: str,
+    form: object,
+    alias: TypeAliasType,
+    env: Mapping[object, tuple[object, ...]],
+    path: tuple[object, ...],
+) -> tuple[object, ...]:
+    """
+    Flatten the body of the type alias ``form`` refers to, binding its type parameters.
+
+    ``form`` is ``alias`` itself or a subscription of it. A generic alias used with the wrong
+    number of arguments, or with a ``TypeVarTuple`` or ``ParamSpec`` parameter, is returned as
+    is, so the caller rejects it; PEP 696 defaults are never read. Raises ``TypeError`` for a
+    recursive alias and for a ``type`` statement alias whose lazily evaluated body names
+    something undefined.
+    """
+    params = alias.__type_params__
+    args = get_args(form)
+    if len(params) != len(args) or not all(isinstance(p, TypeVar) for p in params):
+        return (form,)
+    if alias in path:
+        msg = f"{name}(): type alias {alias.__name__} is recursive"
+        raise TypeError(msg)
+    try:
+        value = alias.__value__
+    except NameError as exc:
+        msg = f"{name}(): type alias {alias.__name__} cannot be evaluated: {exc}"
+        raise TypeError(msg) from exc
+    bound: dict[object, tuple[object, ...]] = {
+        p: _flatten_exception_form(name, a, env, path) for p, a in zip(params, args, strict=True)
+    }
+    return _flatten_exception_form(name, value, bound, (*path, alias))
+
+
+def _flatten_exception_form(
+    name: str,
+    form: object,
+    env: Mapping[object, tuple[object, ...]],
+    path: tuple[object, ...],
+) -> tuple[object, ...]:
+    """
+    Unwrap type aliases and ``Annotated``, and expand unions, recursively.
+
+    ``env`` maps the type parameters of the aliases being expanded to the classes they stand for;
+    ``path`` holds the aliases being expanded, so a recursive alias raises ``TypeError`` while an
+    alias reached twice by different routes does not.
+    ``Never`` and ``NoReturn`` flatten to nothing: they add no class to a union.
+    """
+    if isinstance(form, TypeVar):
+        return env.get(form, (form,))
+    args = get_args(form)
+    origin = form if isinstance(form, _ALIASES) else get_origin(form)
+    if isinstance(origin, _ALIASES):
+        return _expand_alias(name, form, origin, env, path)
+    if origin is Annotated:
+        return _flatten_exception_form(name, args[0], env, path)
+    if origin in _UNIONS:
+        return tuple(c for arg in args for c in _flatten_exception_form(name, arg, env, path))
+    return () if form is Never or form is NoReturn else (form,)
+
+
+def _exception_classes(name: str, forms: tuple[TypeForm[TE], ...]) -> tuple[type[TE], ...]:
+    """
+    Flatten classes, ``X | Y`` unions, type aliases and ``Annotated`` into exception classes.
+
+    Non-classes (``ExceptionGroup[E]``, ``type[E]``, ``Literal``, strings, ``NewType``, tuples,
+    a free ``TypeVar``, which gets its own hint) are not runtime-checkable; classes outside
+    ``Exception`` (``Any`` is one at runtime) and empty calls get "requires".
+    Raises ``TypeError`` on either.
+    """
+    classes = tuple(c for form in forms for c in _flatten_exception_form(name, form, {}, ()))
+    requires = f"{name}() requires one or more exception types (subclasses of Exception)"
+    if not classes:
+        raise TypeError(requires)
+    for c in classes:
+        if not isinstance(c, type):
+            hint = (
+                f"subscript the alias, or pass the runtime class ({name}(exc))"
+                if isinstance(c, TypeVar)
+                else "pass a class, X | Y, Annotated or a type alias"
+            )
+            msg = f"{name}(): {c!r} is not runtime-checkable; {hint}"
+            raise TypeError(msg)
+        if not issubclass(c, Exception):
+            raise TypeError(requires)
+    return cast("tuple[type[TE], ...]", classes)
+
+
 def as_result(
-    *exceptions: type[TE],
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, R]], Callable[P, Result[R, TE]]]:
     """
     Make a decorator to turn a function into one that returns a ``Result``.
@@ -1109,19 +1224,48 @@ def as_result(
         >>> parse("x").map_err(type)
         Err(<class 'ValueError'>)
 
+    Several exception types go in one union or in separate arguments:
+
+        >>> @as_result(ValueError | KeyError)  # same as @as_result(ValueError, KeyError)
+        ... def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> lookup({"a": "1"}, "a")
+        Ok(1)
+        >>> lookup({}, "a").map_err(type)
+        Err(<class 'KeyError'>)
+
+    A type alias and ``Annotated[...]`` are unwrapped; a generic alias takes one exception
+    type per ``TypeVar`` parameter:
+
+        >>> E = TypeVar("E", bound=Exception)
+        >>> Errors = TypeAliasType("Errors", ValueError | E, type_params=(E,))
+        >>> @as_result(Errors[KeyError])
+        ... def lookup_generic(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> lookup_generic({}, "a").map_err(type)
+        Err(<class 'KeyError'>)
+
+    Any other form raises ``TypeError`` at decoration, and the message names it:
+
+        >>> as_result(ExceptionGroup[ValueError])  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+            ...
+        TypeError: as_result(): ExceptionGroup[ValueError] is not runtime-checkable; ...
+
+    Also rejected: ``NewType``, ``Any``, a string, a free ``TypeVar``, a recursive alias, and a
+    generic alias with an omitted parameter (PEP 696 defaults are not read) or with a
+    ``TypeVarTuple`` or ``ParamSpec`` parameter. ``Never`` and ``NoReturn`` add nothing to a
+    union.
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    classes = _exception_classes("as_result", exceptions)
 
     def decorator(f: Callable[P, R]) -> Callable[P, Result[R, TE]]:
         @functools.wraps(f)
         def wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         return wrapper
@@ -1130,7 +1274,7 @@ def as_result(
 
 
 def as_async_result(
-    *exceptions: type[TE],
+    *exceptions: TypeForm[TE],
 ) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Coroutine[object, object, Result[R, TE]]]]:
     """
     Make a decorator to turn an async function into one that returns a ``Result``.
@@ -1138,15 +1282,43 @@ def as_async_result(
     Regular return values are turned into ``Ok(return_value)``. Raised
     exceptions of the specified exception type(s) are turned into ``Err(exc)``.
 
+    The accepted forms, and the ones rejected with ``TypeError`` at decoration, are those of
+    ``as_result``.
+
     Only subclasses of ``Exception`` are accepted. ``BaseException``-only types
     (``KeyboardInterrupt``, ``SystemExit``, ``asyncio.CancelledError``) must
     propagate — swallowing them breaks interrupts and task cancellation.
+
+    Examples:
+        >>> import asyncio
+        >>> @as_async_result(ValueError | KeyError)
+        ... async def lookup(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> asyncio.run(lookup({"a": "1"}, "a"))
+        Ok(1)
+        >>> asyncio.run(lookup({}, "a")).map_err(type)
+        Err(<class 'KeyError'>)
+
+    Passing the exception types as separate arguments is equivalent:
+
+        >>> @as_async_result(ValueError, KeyError)
+        ... async def lookup_args(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> asyncio.run(lookup_args({}, "a")).map_err(type)
+        Err(<class 'KeyError'>)
+
+    A generic type alias is subscripted with the exception types to add:
+
+        >>> E = TypeVar("E", bound=Exception)
+        >>> Errors = TypeAliasType("Errors", ValueError | E, type_params=(E,))
+        >>> @as_async_result(Errors[KeyError])
+        ... async def lookup_generic(d: dict[str, str], k: str) -> int:
+        ...     return int(d[k])
+        >>> asyncio.run(lookup_generic({}, "a")).map_err(type)
+        Err(<class 'KeyError'>)
+
     """
-    if not exceptions or not all(
-        inspect.isclass(exception) and issubclass(exception, Exception) for exception in exceptions
-    ):
-        msg = "as_async_result() requires one or more exception types (subclasses of Exception)"
-        raise TypeError(msg)
+    classes = _exception_classes("as_async_result", exceptions)
 
     def decorator(
         f: Callable[P, Awaitable[R]],
@@ -1155,7 +1327,7 @@ def as_async_result(
         async def async_wrapper(*args: P.args, **kwargs: P.kwargs) -> Result[R, TE]:
             try:
                 return Ok(await f(*args, **kwargs))
-            except exceptions as exc:
+            except classes as exc:
                 return Err(exc)
 
         # SAFETY: `async_wrapper` is declared as `async def`, so at runtime it

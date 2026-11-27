@@ -449,7 +449,7 @@ asyncio.run(main())
 
 `corrode` is designed for gradual adoption — no big-bang rewrite:
 
-1. **Wrap** existing functions with `@as_result(ExcType, ...)` — the body is
+1. **Wrap** existing functions with `@as_result(KeyError | ValueError)` — the body is
    unchanged, callers start receiving `Result` with the exception inside `Err`.
 2. **Return `Err(exc)` explicitly** — replace `raise` with `return Err(exc)`
    and drop the decorator; the error types move into the signature, callers
@@ -467,7 +467,7 @@ os.environ["PORT"] = "8080"
 
 # Step 1: wrap — the body is untouched, callers get Result.
 # Raised KeyError / ValueError become Err(exc); other exceptions propagate.
-@as_result(KeyError, ValueError)
+@as_result(KeyError | ValueError)
 def parse_port_wrapped(key: str) -> int:
     return int(os.environ[key])
 
@@ -519,6 +519,38 @@ assert parse_port("MISSING") == Err(MissingKey(key="MISSING"))
 `@as_result` accepts only `Exception` subclasses — `KeyboardInterrupt`,
 `SystemExit`, and `asyncio.CancelledError` always propagate, so Ctrl-C and
 task cancellation keep working no matter what you wrap.
+
+Only forms that `isinstance` can check are supported: a class, an `X | Y`
+union of classes, a type alias of those (`type X = ...`, `TypeAlias` or
+`TypeAliasType`), a generic type alias subscripted with exception types
+(`type Errors[E: Exception] = ValueError | E`, then `Errors[KeyError]`, one
+exception type per `TypeVar` parameter) or `Annotated[...]` around one.
+Anything else — `ExceptionGroup[ValueError]`, `type[E]`, a `NewType`, a
+recursive type alias — raises `TypeError` when the decorator is applied (at
+import time), even where a type checker accepts it.
+
+`Never` and `NoReturn` add nothing to a union (`Errors[Never]` catches only
+`ValueError`); on their own they raise `TypeError`. Some rejections are by
+design: `ExceptionGroup[...]` because bare `ExceptionGroup` would also catch
+`ExceptionGroup[KeyError]`, `NewType` because its supertype would catch every
+`ValueError`, not just the new type, `Any` because it cannot be checked as
+"anything", and an old-style unsubscripted alias with a defaulted `TypeVar`
+(`Union[ValueError, Y]`) because it looks like a free `TypeVar` at runtime
+(use `TypeAliasType` or `type`). Also not supported: a generic alias with an
+omitted parameter, even one with a PEP 696 default (pass every argument:
+defaults are not read), a generic alias with a `TypeVarTuple` or `ParamSpec`
+parameter (no exception class comes out of one), and a string (pass the class
+itself: forward references are not resolved).
+
+A `TypeVar` is erased at runtime, so inside a generic function pass the
+runtime class instead of the alias: take `exc: type[E]` and write
+`@as_result(exc)`. `except` ignores ABC virtual subclasses: with
+`class Base(ABC, Exception)` and `Base.register(ValueError)`, `as_result(Base)`
+lets a raised `ValueError` propagate (a plain ABC is not an `Exception` and is
+rejected when the decorator is applied).
+
+Several exception types go in one union, `as_result(A | B)`, or as separate
+arguments, `as_result(A, B)`; the two are equivalent.
 
 `try`/`except` and `Result` mix freely in the same function — catch what you
 caught before and wrap it in `Err`.

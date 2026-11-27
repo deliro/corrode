@@ -3,8 +3,13 @@ from __future__ import annotations
 import asyncio
 import copy
 import pickle
+import sys
+import typing
+from collections.abc import Callable
 
 import pytest
+import typing_extensions
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -19,6 +24,148 @@ from corrode import (
     is_err,
     is_ok,
 )
+
+_Errs = TypeAliasType("_Errs", ValueError | KeyError)
+_AllErrs = TypeAliasType("_AllErrs", _Errs | TimeoutError)
+_OldErrs: typing.TypeAlias = ValueError | KeyError
+_Wrapped = TypeAliasType("_Wrapped", _Errs)
+_AnnErr = TypeAliasType("_AnnErr", typing.Annotated[ValueError, "x"])
+_Interrupts = TypeAliasType("_Interrupts", ValueError | KeyboardInterrupt)
+_Groups = TypeAliasType("_Groups", ExceptionGroup[ValueError])
+_E = typing_extensions.TypeVar("_E", bound=Exception)
+_GenErrs = TypeAliasType("_GenErrs", ValueError | _E, type_params=(_E,))
+_One = TypeAliasType("_One", _E, type_params=(_E,))
+_NestedGen = TypeAliasType("_NestedGen", _GenErrs[_E] | TimeoutError, type_params=(_E,))
+_AnnGen = TypeAliasType("_AnnGen", typing.Annotated[_E | ValueError, 1], type_params=(_E,))
+
+
+class _GenError(Exception, typing.Generic[_E]):
+    pass
+
+
+_Ts = typing_extensions.TypeVarTuple("_Ts")
+_P = typing_extensions.ParamSpec("_P")
+_TsAlias = TypeAliasType("_TsAlias", tuple[*_Ts], type_params=(_Ts,))
+_PsAlias = TypeAliasType("_PsAlias", Callable[_P, int], type_params=(_P,))
+_BareTs = TypeAliasType("_BareTs", _Ts, type_params=(_Ts,))
+_BareP = TypeAliasType("_BareP", _P, type_params=(_P,))
+_X = typing_extensions.TypeVar("_X", bound=Exception)
+_Y = typing_extensions.TypeVar("_Y", bound=Exception, default=KeyError)
+_DefErrs = TypeAliasType("_DefErrs", _X | _Y, type_params=(_X, _Y))
+_AllDef = TypeAliasType("_AllDef", ValueError | _Y, type_params=(_Y,))
+_VarErrs = TypeAliasType("_VarErrs", _E, type_params=(_E, _Ts))
+_MidErrs = TypeAliasType("_MidErrs", _E | _X, type_params=(_E, _Ts, _X))
+_GenCls = TypeAliasType("_GenCls", _E | _GenError, type_params=(_E,))
+_PsErrs = TypeAliasType("_PsErrs", _E, type_params=(_E, _P))
+_TypeOf = TypeAliasType("_TypeOf", type[_E], type_params=(_E,))
+_TypeOfArg = TypeAliasType("_TypeOfArg", _TypeOf[_X] | ValueError, type_params=(_X,))
+_TypeOfFixed = TypeAliasType("_TypeOfFixed", _TypeOf[KeyError] | _X, type_params=(_X,))
+_UnpAlias = TypeAliasType("_UnpAlias", typing_extensions.Unpack[_Ts], type_params=(_Ts,))
+_DiaC = TypeAliasType("_DiaC", ValueError)
+_DiaA = TypeAliasType("_DiaA", _DiaC | KeyError)
+_DiaB = TypeAliasType("_DiaB", _DiaC | TypeError)
+
+
+_NT = typing.NewType("_NT", ValueError)
+_BOTH = pytest.mark.parametrize(
+    ("decorator", "name"),
+    [(as_result, "as_result"), (as_async_result, "as_async_result")],
+)
+_REQUIRES = "{name}() requires one or more exception types (subclasses of Exception)"
+_UNCHECKABLE = (
+    "{name}(): {shown} is not runtime-checkable; pass a class, X | Y, Annotated or a type alias"
+)
+_FREE_TYPEVAR = (
+    "{name}(): {shown} is not runtime-checkable; "
+    "subscript the alias, or pass the runtime class ({name}(exc))"
+)
+
+
+def _type_statement(source: str, root: str) -> object:
+    """Run ``type`` statements (a syntax error on 3.11) and evaluate ``root`` among them."""
+    ns: dict[str, object] = {}
+    exec(source, ns)  # noqa: S102
+    return eval(root, ns)
+
+
+_PY312 = sys.version_info >= (3, 12)
+_STMT_ERRS = "type Errors[E: Exception] = ValueError | E"
+_PY312_LISTED: list[tuple[object, Exception]] = (
+    [
+        (typing.TypeAliasType("Errs", ValueError | KeyError), KeyError("k")),
+        (_type_statement(_STMT_ERRS, "Errors[KeyError]"), ValueError("v")),
+        (_type_statement(_STMT_ERRS, "Errors[KeyError]"), KeyError("k")),
+    ]
+    if _PY312
+    else []
+)
+_LISTED = pytest.mark.parametrize(
+    ("form", "raised"),
+    [
+        (ValueError, ValueError("v")),
+        (ValueError | KeyError, ValueError("v")),
+        (ValueError | KeyError, KeyError("k")),
+        (typing.Union[ValueError, KeyError], ValueError("v")),  # noqa: UP007
+        (typing.Union[ValueError, KeyError], KeyError("k")),  # noqa: UP007
+        (_Errs, ValueError("v")),
+        (_Errs, KeyError("k")),
+        (_AllErrs, KeyError("k")),
+        (_AllErrs, TimeoutError("t")),
+        (_OldErrs, ValueError("v")),
+        (_OldErrs, KeyError("k")),
+        (typing.Annotated[ValueError, "x"], ValueError("v")),
+        (typing.Annotated[ValueError | KeyError, 1], ValueError("v")),
+        (typing.Annotated[ValueError | KeyError, 1], KeyError("k")),
+        (_GenErrs[KeyError], ValueError("v")),
+        (_GenErrs[KeyError], KeyError("k")),
+        (_GenErrs[KeyError | TypeError], ValueError("v")),
+        (_GenErrs[KeyError | TypeError], KeyError("k")),
+        (_GenErrs[KeyError | TypeError], TypeError("t")),
+        (_GenErrs[_GenErrs[KeyError]], ValueError("v")),
+        (_GenErrs[_GenErrs[KeyError]], KeyError("k")),
+        (_One[KeyError], KeyError("k")),
+        (_NestedGen[KeyError], ValueError("v")),
+        (_NestedGen[KeyError], KeyError("k")),
+        (_NestedGen[KeyError], TimeoutError("t")),
+        (_AnnGen[KeyError], KeyError("k")),
+        (_AnnGen[KeyError], ValueError("v")),
+        (_DiaA | _DiaB, ValueError("v")),
+        (_DiaA | _DiaB, KeyError("k")),
+        (_DiaA | _DiaB, TypeError("t")),
+        (_DefErrs[ValueError, KeyError], ValueError("v")),
+        (_DefErrs[ValueError, KeyError], KeyError("k")),
+        (_GenCls[ValueError], _GenError()),
+        (_GenErrs[typing.Never], ValueError("v")),
+        (typing.Union[ValueError, typing.Never], ValueError("v")),  # noqa: UP007, RUF020
+        (typing.Union[ValueError, typing.NoReturn], ValueError("v")),  # noqa: UP007, RUF020
+        (_Wrapped, KeyError("k")),
+        (_AnnErr, ValueError("v")),
+        *_PY312_LISTED,
+    ],
+)
+_UNLISTED = pytest.mark.parametrize(
+    "form",
+    [
+        ValueError,
+        ValueError | KeyError,
+        typing.Union[ValueError, KeyError],  # noqa: UP007
+        _Errs,
+        _AllErrs,
+        _OldErrs,
+        typing.Annotated[ValueError, "x"],
+        typing.Annotated[ValueError | KeyError, 1],
+        _GenErrs[KeyError],
+        _GenErrs[KeyError | TypeError],
+        _One[KeyError],
+        _NestedGen[KeyError],
+        _AnnGen[KeyError],
+        _DefErrs[ValueError, TypeError],
+        _GenErrs[typing.Never],
+        typing.Union[ValueError, typing.Never],  # noqa: UP007, RUF020
+        *(form for form, _ in _PY312_LISTED),
+    ],
+)
+
 
 # ---------------------------------------------------------------------------
 # Construction, repr, equality, hashing
@@ -690,27 +837,44 @@ class TestAsResult:
         with pytest.raises(IndexError):
             f()
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
-
-            @as_result()
-            def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="requires one or more exception types"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_result("not an exception type")  # type: ignore[arg-type]
             def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         # KeyboardInterrupt / SystemExit / CancelledError must never be swallowed
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_result(KeyboardInterrupt)  # type: ignore[type-var]
+            @as_result(KeyboardInterrupt)
             def f() -> int:
                 return 1
+
+    @_LISTED
+    def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise raised
+
+        result = f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @_UNLISTED
+    def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_result(form)
+        def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            f()
+        assert str(exc_info.value) == "i"
 
 
 class TestAsAsyncResult:
@@ -734,24 +898,21 @@ class TestAsAsyncResult:
         assert isinstance(result, Err)
         assert isinstance(result.unwrap_err(), ValueError)
 
-    def test_no_exception_types_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
-
-            @as_async_result()
-            async def f() -> int:
-                return 1
-
     def test_non_exception_type_raises(self) -> None:
-        with pytest.raises(TypeError, match="as_async_result\\(\\) requires one or more"):
+        with pytest.raises(TypeError) as exc_info:
 
             @as_async_result("not an exception type")  # type: ignore[arg-type]
             async def f() -> int:
                 return 1
 
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name="as_async_result", shown="'not an exception type'"
+        )
+
     def test_base_exception_only_type_rejected(self) -> None:
         with pytest.raises(TypeError, match="subclasses of Exception"):
 
-            @as_async_result(asyncio.CancelledError)  # type: ignore[type-var]
+            @as_async_result(asyncio.CancelledError)
             async def f() -> int:
                 return 1
 
@@ -763,6 +924,181 @@ class TestAsAsyncResult:
 
         with pytest.raises(IndexError):
             await f()
+
+    @pytest.mark.asyncio
+    @_LISTED
+    async def test_listed_exception_becomes_err(self, form: object, raised: Exception) -> None:
+        @as_async_result(form)
+        async def f() -> int:
+            raise raised
+
+        result = await f()
+        assert isinstance(result, Err)
+        assert result.unwrap_err() is raised
+
+    @pytest.mark.asyncio
+    @_UNLISTED
+    async def test_unlisted_exception_propagates_from_form(self, form: object) -> None:
+        @as_async_result(form)
+        async def f() -> int:
+            raise IndexError("i")
+
+        with pytest.raises(IndexError) as exc_info:
+            await f()
+        assert str(exc_info.value) == "i"
+
+
+class TestRejectionContract:
+    @_BOTH
+    def test_empty_call_keeps_requires_message(
+        self, decorator: Callable[..., object], name: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator()
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    @_BOTH
+    def test_union_names_offending_member(
+        self, decorator: Callable[..., object], name: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(ValueError | ExceptionGroup[ValueError])
+        assert str(exc_info.value) == _UNCHECKABLE.format(
+            name=name, shown="ExceptionGroup[ValueError]"
+        )
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        ("form", "shown"),
+        [
+            (ExceptionGroup[ValueError], "ExceptionGroup[ValueError]"),
+            ("ValueError", "'ValueError'"),
+            (type[ValueError], "type[ValueError]"),
+            (_NT, "tests.test_result._NT"),
+            (typing.Literal[1], "typing.Literal[1]"),
+            (typing.Annotated[ExceptionGroup[ValueError], 1], "ExceptionGroup[ValueError]"),
+            (_Groups, "ExceptionGroup[ValueError]"),
+            (_GenErrs, "_GenErrs"),
+            (_GenErrs[KeyError, TypeError], repr(_GenErrs[KeyError, TypeError])),
+            (_TsAlias[ValueError], repr(_TsAlias[ValueError])),
+            (_PsAlias[ValueError], repr(_PsAlias[ValueError])),
+            (_BareTs[ValueError], repr(_BareTs[ValueError])),
+            (_BareP[[int]], repr(_BareP[[int]])),
+            (_GenErrs[ExceptionGroup[ValueError]], "ExceptionGroup[ValueError]"),
+            (_PsErrs[ValueError], repr(_PsErrs[ValueError])),
+            (_MidErrs[ValueError], repr(_MidErrs[ValueError])),
+            (_DefErrs[()], repr(_DefErrs[()])),
+            (_DefErrs[ValueError], repr(_DefErrs[ValueError])),
+            (_AllDef, "_AllDef"),
+            (_AllDef[()], repr(_AllDef[()])),
+            (_VarErrs[ValueError], repr(_VarErrs[ValueError])),
+            (_PsErrs[ValueError, [int]], repr(_PsErrs[ValueError, [int]])),
+            (_AllDef[KeyError, TypeError], repr(_AllDef[KeyError, TypeError])),
+            (_UnpAlias[ValueError], repr(_UnpAlias[ValueError])),
+            (_TypeOf[ValueError], repr(type[_E])),
+            (_TypeOfArg[KeyError], repr(type[_E])),
+            (_TypeOfFixed[ValueError], repr(type[_E])),
+            (_GenErrs[[ValueError]], repr([ValueError])),
+            (_GenErrs[{}], repr({})),
+            (_GenErrs[[int]], repr([int])),
+            ((ValueError, KeyError), "(<class 'ValueError'>, <class 'KeyError'>)"),
+        ],
+    )
+    def test_non_runtime_checkable_form_rejected(
+        self, decorator: Callable[..., object], name: str, form: object, shown: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _UNCHECKABLE.format(name=name, shown=shown)
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        ("form", "shown"),
+        [
+            (_E, "~_E"),
+            (_GenErrs[_E], "~_E"),
+            (_NestedGen[_E], "~_E"),
+            (typing.Union[ValueError, _Y], "~_Y"),  # noqa: UP007
+        ],
+    )
+    def test_free_type_variable_rejected_with_hint(
+        self, decorator: Callable[..., object], name: str, form: object, shown: str
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _FREE_TYPEVAR.format(name=name, shown=shown)
+
+    @_BOTH
+    @pytest.mark.parametrize(
+        "form",
+        [
+            ValueError | None,
+            typing.Optional[ValueError],  # noqa: UP045
+            ValueError | KeyboardInterrupt,
+            ValueError | asyncio.CancelledError,
+            _Interrupts,
+            typing.Annotated[ValueError | asyncio.CancelledError, 1],
+            int,
+            _GenErrs[int],
+            typing.Never,
+            typing.NoReturn,
+            typing.Any,
+            typing.Union[typing.Never, typing.NoReturn],  # noqa: UP007, RUF020
+        ],
+    )
+    def test_non_exception_class_keeps_requires_message(
+        self, decorator: Callable[..., object], name: str, form: object
+    ) -> None:
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _REQUIRES.format(name=name)
+
+    @_BOTH
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="needs the type statement")
+    @pytest.mark.parametrize(
+        ("source", "root", "alias"),
+        [
+            ("type R = ValueError | R", "R", "R"),
+            ("type A = ValueError | B\ntype B = KeyError | A", "A", "A"),
+            ("type Errs[E] = E | Errs[E]", "Errs[KeyError]", "Errs"),
+        ],
+    )
+    def test_recursive_alias_rejected(
+        self,
+        decorator: Callable[..., object],
+        name: str,
+        source: str,
+        root: str,
+        alias: str,
+    ) -> None:
+        form = _type_statement(source, root)
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == f"{name}(): type alias {alias} is recursive"
+
+    @_BOTH
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="needs the type statement")
+    @pytest.mark.parametrize("root", ["G", "G[()]"])
+    def test_type_statement_alias_without_arguments_rejected(
+        self, decorator: Callable[..., object], name: str, root: str
+    ) -> None:
+        form = _type_statement("type G[E] = E", root)
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == _UNCHECKABLE.format(name=name, shown=repr(form))
+
+    @_BOTH
+    @pytest.mark.skipif(sys.version_info < (3, 12), reason="needs the type statement")
+    def test_alias_with_undefined_name_rejected(
+        self, decorator: Callable[..., object], name: str
+    ) -> None:
+        form = _type_statement("type Lazy = ValueError | Undefined", "Lazy")
+        with pytest.raises(TypeError) as exc_info:
+            decorator(form)
+        assert str(exc_info.value) == (
+            f"{name}(): type alias Lazy cannot be evaluated: name 'Undefined' is not defined"
+        )
+        assert isinstance(exc_info.value.__cause__, NameError)
 
 
 # ---------------------------------------------------------------------------
