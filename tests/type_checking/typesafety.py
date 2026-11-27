@@ -7,6 +7,10 @@ statically to ensure the corrode public API is correctly typed.
 from __future__ import annotations
 
 from collections.abc import Awaitable
+from typing import Annotated, Never, assert_type
+
+import typing_extensions
+from typing_extensions import TypeAliasType
 
 from corrode import (
     DoError,
@@ -166,7 +170,7 @@ def parse(s: str) -> int:
     return int(s)
 
 
-_as_result: Result[int, ValueError] = parse("42")
+assert_type(parse("42"), Result[int, ValueError])
 
 
 @as_async_result(OSError)
@@ -175,6 +179,99 @@ async def fetch(url: str) -> bytes:  # noqa: ARG001
 
 
 _as_async_result: Awaitable[Result[bytes, OSError]] = fetch("http://example.com")
+
+
+@as_result(ValueError | KeyError)
+def parse_union(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_union("1"), Result[int, ValueError | KeyError])
+
+
+@as_async_result(ValueError | KeyError)
+async def fetch_union(s: str) -> int:
+    return int(s)
+
+
+async def _check_fetch_union() -> None:
+    assert_type(await fetch_union("1"), Result[int, ValueError | KeyError])
+
+
+HttpErrors = TypeAliasType("HttpErrors", ValueError | KeyError)
+AllErrors = TypeAliasType("AllErrors", HttpErrors | TimeoutError)
+
+
+@as_result(HttpErrors)
+def parse_alias(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_alias("1"), Result[int, ValueError | KeyError])
+
+
+@as_result(AllErrors)
+def parse_all(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_all("1"), Result[int, ValueError | KeyError | TimeoutError])
+
+
+@as_result(Annotated[ValueError, "x"])
+def parse_annotated(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_annotated("1"), Result[int, ValueError])
+
+
+_E = typing_extensions.TypeVar("_E", bound=Exception)
+GenErrors = TypeAliasType("GenErrors", ValueError | _E, type_params=(_E,))
+
+
+@as_result(GenErrors[KeyError])
+def parse_generic(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_generic("1"), Result[int, ValueError | KeyError])
+
+
+@as_result(GenErrors[Never])
+def parse_never(s: str) -> int:
+    return int(s)
+
+
+assert_type(parse_never("1"), Result[int, ValueError])
+
+
+@as_async_result(AllErrors)
+async def fetch_alias(s: str) -> int:
+    return int(s)
+
+
+@as_async_result(Annotated[ValueError, "x"])
+async def fetch_annotated(s: str) -> int:
+    return int(s)
+
+
+@as_async_result(GenErrors[KeyError])
+async def fetch_generic(s: str) -> int:
+    return int(s)
+
+
+@as_async_result(GenErrors[Never])
+async def fetch_never(s: str) -> int:
+    return int(s)
+
+
+async def _check_fetch_forms() -> None:
+    assert_type(await fetch_alias("1"), Result[int, ValueError | KeyError | TimeoutError])
+    assert_type(await fetch_annotated("1"), Result[int, ValueError])
+    assert_type(await fetch_generic("1"), Result[int, ValueError | KeyError])
+    assert_type(await fetch_never("1"), Result[int, ValueError])
+
 
 # ---------------------------------------------------------------------------
 # 12. Async method types

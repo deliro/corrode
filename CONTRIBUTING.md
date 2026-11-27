@@ -17,7 +17,7 @@ just            # lint + typecheck + tests (what CI runs)
 just test       # tests only (includes doctests and README blocks)
 just test-cov   # tests with coverage report
 just fmt        # auto-format
-just typecheck  # mypy (3.13 and 3.11 modes), basedpyright, ty, pyrefly
+just typecheck  # mypy, basedpyright, ty, pyrefly (strict), each at targets 3.11 and 3.15
 ```
 
 All four type checkers must pass with zero errors. Every code block in
@@ -64,5 +64,5 @@ so commits must follow [Conventional Commits](https://www.conventionalcommits.or
 - New public API needs: tests, doctest examples in the docstring, a README
   section, and typesafety coverage in `tests/type_checking/typesafety.py`.
 - Patch coverage target is 100% (enforced by codecov).
-- CI must be fully green: tests on 3.11–3.14, ruff check + format, all four
+- CI must be fully green: tests on 3.11–3.15, ruff check + format, all four
   type checkers.

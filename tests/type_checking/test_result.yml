@@ -97,3 +97,31 @@
         reveal_type(res2)  # N: Revealed type is "corrode.result.Err[str]"
     else:
         reveal_type(res2)  # N: Revealed type is "corrode.result.Ok[int]"
+
+- case: as_result_union_with_none
+  disable_cache: false
+  main: |
+    from corrode import as_result
+
+    as_result(ValueError | None)  # E: Value of type variable "TE" of "as_result" cannot be "ValueError | None"  [type-var]
+
+- case: as_result_union_with_base_exception
+  disable_cache: false
+  main: |
+    from corrode import as_result
+
+    as_result(ValueError | KeyboardInterrupt)  # E: Value of type variable "TE" of "as_result" cannot be "ValueError | KeyboardInterrupt"  [type-var]
+
+- case: as_result_non_exception_class
+  disable_cache: false
+  main: |
+    from corrode import as_result
+
+    as_result(int)  # E: Value of type variable "TE" of "as_result" cannot be "int"  [type-var]
+
+- case: as_result_tuple_form
+  disable_cache: false
+  main: |
+    from corrode import as_result
+
+    as_result((ValueError, KeyError))  # E: Argument 1 to "as_result" has incompatible type "tuple[type[ValueError], type[KeyError]]"; expected "TypeForm[Never]"  [arg-type]
